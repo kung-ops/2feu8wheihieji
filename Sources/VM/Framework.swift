@@ -131,6 +131,15 @@ enum Framework {
     }
 
     static func instanceField(_ vm: VM, _ o: JObject, _ f: DexFieldRef) -> Value {
+        // A field read on a placeholder (an Android/AndroidX object the sandbox
+        // doesn't really have) gives another placeholder instead of null, so
+        // chains like `getSavedStateRegistry().a.c` don't crash. It is stored so
+        // later reads see the same object.
+        if !o.cls.isApp, f.type.hasPrefix("L") {
+            let v: Value = f.type == "Ljava/lang/String;" ? .obj(vm.str("")) : .obj(vm.newObject(f.type))
+            o.fields[f.name] = v
+            return v
+        }
         return Value.defaultFor(f.type)
     }
 

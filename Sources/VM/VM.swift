@@ -67,6 +67,8 @@ final class VM {
     var depth = 0
     var stopped = false
     var log: (String) -> Void = { _ in }
+    /// Methods currently running (for crash stack traces).
+    private var frames: [DexMethod] = []
 
     // Android runtime state (VM thread only)
     var activityStack: [ActivityHost] = []
@@ -171,6 +173,7 @@ final class VM {
             guard let self = self, !self.stopped else { return }
             self.steps = 0
             self.depth = 0
+            self.frames.removeAll()
             do {
                 try work()
             } catch let t as JavaThrow {
@@ -195,7 +198,9 @@ final class VM {
 
     func reportCrash(_ ex: JObject) {
         let text = describeThrowable(ex)
-        log("FATAL EXCEPTION: " + text)
+        var stack = ex.fields["__stack"]?.o?.string ?? ""
+        if stack.isEmpty { stack = stackTrace() }
+        log("FATAL EXCEPTION: " + text + (stack.isEmpty ? "" : "\n" + stack))
         let h = host
         let name = apk.label
         DispatchQueue.main.async { h?.showError(title: "\(name) has stopped", message: text) }
@@ -294,7 +299,15 @@ final class VM {
     func throwable(_ type: String, _ message: String? = nil) -> JavaThrow {
         let o = JObject(cls: classFor(type))
         if let m = message { o.fields["__message"] = .obj(str(m)) }
+        o.fields["__stack"] = .obj(str(stackTrace()))
         return JavaThrow(obj: o)
+    }
+
+    /// "at com.example.Foo.bar" lines for the innermost Java frames.
+    func stackTrace(limit: Int = 6) -> String {
+        return frames.suffix(limit).reversed().map {
+            "    at " + VMClass.javaName($0.ref.classDesc) + "." + $0.ref.name
+        }.joined(separator: "\n")
     }
 
     func npe(_ what: String) -> JavaThrow {
@@ -417,7 +430,11 @@ final class VM {
             return try Framework.call(self, m.ref, this: m.isStatic ? nil : args.first?.o, args: args)
         }
         depth += 1
-        defer { depth -= 1 }
+        frames.append(m)
+        defer {
+            depth -= 1
+            if !frames.isEmpty { frames.removeLast() }
+        }
         if depth > 600 {
             throw throwable("Ljava/lang/StackOverflowError;", "stack size \(depth)")
         }
@@ -607,6 +624,7 @@ final class VM {
                     pc += 3
                 case 0x27:
                     guard let ex = O(AA) else { throw npe("throw") }
+                    if ex.fields["__stack"] == nil { ex.fields["__stack"] = .obj(str(stackTrace())) }
                     throw JavaThrow(obj: ex)
                 case 0x28: pc += Int(Int8(truncatingIfNeeded: AA))
                 case 0x29: pc += s16(pc + 1)
