@@ -21,6 +21,10 @@ extension VM {
         activityStack.append(host)
         let screen = self.host
         onMain { screen?.push(host) }
+        if let note = libraryNote {
+            log(note)
+            libraryNote = nil
+        }
         log("▶︎ Starting \(c.javaName)")
 
         let initRef = DexMethodRef(classDesc: desc, name: "<init>", params: [], ret: "V", sig: "<init>()V")

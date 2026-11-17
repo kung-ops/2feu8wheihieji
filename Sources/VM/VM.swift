@@ -52,6 +52,12 @@ final class VM {
     private(set) var classes: [String: VMClass] = [:]
     private var foundClasses: [String: DexClass] = [:]
     private var missingClasses: Set<String> = []
+
+    /// Library classes inside the APK that we treat like Android itself
+    /// (e.g. AndroidX's AppCompatActivity after R8 renamed it to "Lo/xy;"),
+    /// mapped to the real Android class they stand in for.
+    private var libraryClasses: [String: String] = [:]
+    var libraryNote: String?
     private var internedStrings: [String: JObject] = [:]
     private var warned: Set<String> = []
     let thread = VMThread()
@@ -81,6 +87,7 @@ final class VM {
 
     init(apk: ApkPackage) {
         self.apk = apk
+        findLibraryActivityParents()
         thread.start()
     }
 
@@ -95,6 +102,7 @@ final class VM {
 
     func isFrameworkName(_ name: String) -> Bool {
         if name.hasPrefix("[") { return true }
+        if libraryClasses[name] != nil { return true }
         for p in VM.frameworkPrefixes where name.hasPrefix(p) { return true }
         return false
     }
@@ -111,6 +119,40 @@ final class VM {
         }
         missingClasses.insert(name)
         return nil
+    }
+
+    /// Walks each activity's superclasses. Anything between the app's own
+    /// classes and android.app.Activity that lives outside the app's package is
+    /// AndroidX / support library code (often renamed by R8), so it is handled
+    /// by the built-in Activity stubs instead of being interpreted.
+    private func findLibraryActivityParents() {
+        func pkg(_ desc: String) -> String {
+            guard let slash = desc.lastIndex(of: "/") else { return "L" }
+            return String(desc[...slash])
+        }
+        var own: Set<String> = [pkg(VMClass.descriptor(apk.packageName + ".X"))]
+        for a in apk.activities { own.insert(pkg(VMClass.descriptor(a))) }
+        func isOwn(_ desc: String) -> Bool {
+            for p in own where p.count > 2 && desc.hasPrefix(p) { return true }
+            return false
+        }
+        for a in apk.activities {
+            var cur = dexClass(VMClass.descriptor(a))?.superDesc
+            var steps = 0
+            var sawLibrary = false
+            while let sup = cur, steps < 20, !VM.frameworkPrefixes.contains(where: { sup.hasPrefix($0) }) {
+                if sawLibrary || !isOwn(sup) {
+                    sawLibrary = true
+                    libraryClasses[sup] = "Landroid/app/Activity;"
+                }
+                cur = dexClass(sup)?.superDesc
+                steps += 1
+            }
+        }
+        if !libraryClasses.isEmpty {
+            libraryNote = "ℹ︎ Treating \(libraryClasses.count) bundled library activity class(es) as Android: " +
+                libraryClasses.keys.sorted().prefix(4).map { VMClass.javaName($0) }.joined(separator: ", ")
+        }
     }
 
     func hasAppClass(_ name: String) -> Bool {
@@ -174,6 +216,8 @@ final class VM {
         if let dc = dc {
             if let s = dc.superDesc { c.superclass = classFor(s) }
             c.interfaces = dc.interfaces.map { classFor($0) }
+        } else if let real = libraryClasses[name] {
+            c.superclass = classFor(real)
         } else if name != "Ljava/lang/Object;" {
             c.superclass = classFor(Framework.superOf(name))
         }
