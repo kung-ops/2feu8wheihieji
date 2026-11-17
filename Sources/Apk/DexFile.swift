@@ -97,13 +97,15 @@ final class DexFile {
     private let protoIdsOff: Int, protoCount: Int
     private let fieldIdsOff: Int, fieldCount: Int
     private let methodIdsOff: Int, methodCount: Int
-    private let classDefsOff: Int, classDefCount: Int
+    private let classDefsOff: Int, classDefCountValue: Int
 
     private var stringCache: [Int: String] = [:]
     private var methodRefCache: [Int: DexMethodRef] = [:]
     private var fieldRefCache: [Int: DexFieldRef] = [:]
-    private(set) var classes: [String: DexClass] = [:]
-    private(set) var classOrder: [String] = []
+    /// class descriptor -> index into class_defs. Classes are decoded lazily
+    /// (see `dexClass`), because big apps have tens of thousands of them.
+    private var classIndex: [String: Int] = [:]
+    private var parsed: [String: DexClass] = [:]
 
     init(bytes: [UInt8]) throws {
         d = Bytes(bytes)
@@ -113,11 +115,30 @@ final class DexFile {
         protoCount = d.u32(72); protoIdsOff = d.u32(76)
         fieldCount = d.u32(80); fieldIdsOff = d.u32(84)
         methodCount = d.u32(88); methodIdsOff = d.u32(92)
-        classDefCount = d.u32(96); classDefsOff = d.u32(100)
-        parseClasses()
+        classDefCountValue = d.u32(96); classDefsOff = d.u32(100)
+        indexClasses()
     }
 
     var methodRefCount: Int { return methodCount }
+    var classDefCount: Int { return classDefCountValue }
+
+    /// Header-only peek at a dex file's size (no parsing).
+    static func headerCounts(_ bytes: [UInt8]) -> (classes: Int, methods: Int)? {
+        let d = Bytes(bytes)
+        guard d.count > 0x70, d.u8(0) == 0x64, d.u8(1) == 0x65, d.u8(2) == 0x78 else { return nil }
+        return (d.u32(96), d.u32(88))
+    }
+
+    func hasClass(_ desc: String) -> Bool { return classIndex[desc] != nil }
+
+    /// Decodes one class on first use.
+    func dexClass(_ desc: String) -> DexClass? {
+        if let c = parsed[desc] { return c }
+        guard let i = classIndex[desc] else { return nil }
+        let c = parseClass(i)
+        parsed[desc] = c
+        return c
+    }
     var stringIdCount: Int { return stringCount }
 
     // MARK: - Strings & types
@@ -188,23 +209,30 @@ final class DexFile {
 
     // MARK: - Classes
 
-    private func parseClasses() {
-        guard classDefCount < 500_000 else { return }
-        for i in 0..<classDefCount {
-            let o = classDefsOff + i * 32
-            let desc = type(d.u32(o))
-            let flags = d.u32(o + 4)
-            let superIdx = d.u32(o + 8)
-            let superDesc: String? = superIdx == 0xFFFFFFFF ? nil : type(superIdx)
-            let ifaces = typeList(d.u32(o + 12))
-            let cls = DexClass(desc: desc, superDesc: superDesc, interfaces: ifaces, accessFlags: flags, dex: self)
-            let dataOff = d.u32(o + 24)
-            let staticValuesOff = d.u32(o + 28)
-            if dataOff != 0 { parseClassData(cls, at: dataOff) }
-            if staticValuesOff != 0 { cls.staticValues = parseEncodedArray(staticValuesOff) }
-            if classes[desc] == nil { classOrder.append(desc) }
-            classes[desc] = cls
+    private func indexClasses() {
+        guard classDefCountValue < 1_000_000 else { return }
+        classIndex.reserveCapacity(classDefCountValue)
+        for i in 0..<classDefCountValue {
+            let desc = type(d.u32(classDefsOff + i * 32))
+            if classIndex[desc] == nil { classIndex[desc] = i }
         }
+        // Type/string names were only needed for the index; free that cache.
+        stringCache.removeAll()
+    }
+
+    private func parseClass(_ i: Int) -> DexClass {
+        let o = classDefsOff + i * 32
+        let desc = type(d.u32(o))
+        let flags = d.u32(o + 4)
+        let superIdx = d.u32(o + 8)
+        let superDesc: String? = superIdx == 0xFFFFFFFF ? nil : type(superIdx)
+        let ifaces = typeList(d.u32(o + 12))
+        let cls = DexClass(desc: desc, superDesc: superDesc, interfaces: ifaces, accessFlags: flags, dex: self)
+        let dataOff = d.u32(o + 24)
+        let staticValuesOff = d.u32(o + 28)
+        if dataOff != 0 { parseClassData(cls, at: dataOff) }
+        if staticValuesOff != 0 { cls.staticValues = parseEncodedArray(staticValuesOff) }
+        return cls
     }
 
     private func parseClassData(_ cls: DexClass, at off: Int) {

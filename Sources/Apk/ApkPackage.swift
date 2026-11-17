@@ -6,7 +6,11 @@ final class ApkPackage {
     let zip: ZipArchive
     let manifest: AXMLNode?
     let resources: ResourceTable?
-    let dexFiles: [DexFile]
+    /// "classes.dex", "classes2.dex", …
+    let dexNames: [String]
+    /// Filled by `loadCode()` just before running.
+    private(set) var dexFiles: [DexFile] = []
+    private(set) var codeLoaded = false
 
     private(set) var packageName = "?"
     private(set) var versionName = ""
@@ -32,30 +36,59 @@ final class ApkPackage {
         }
     }
 
-    init(url: URL, loadCode: Bool = true) throws {
+    /// Opens an APK. Cheap: the file is memory-mapped and only the manifest,
+    /// resources and (with `scanCode`) the dex headers are read.
+    init(url: URL, scanCode: Bool = false) throws {
         self.url = url
-        let data = try Data(contentsOf: url, options: .mappedIfSafe)
-        guard let zip = ZipArchive(bytes: [UInt8](data)) else { throw LoadError.notZip }
+        let data = try Data(contentsOf: url, options: .alwaysMapped)
+        guard let zip = ZipArchive(data: data) else { throw LoadError.notZip }
         self.zip = zip
         guard let mbytes = zip.read("AndroidManifest.xml") else { throw LoadError.noManifest }
         manifest = BinaryXML.parse(mbytes)
         resources = zip.read("resources.arsc").flatMap { ResourceTable(bytes: $0) }
 
-        var dexes: [DexFile] = []
+        var names: [String] = []
         var n = 1
-        while loadCode {
+        while true {
             let name = n == 1 ? "classes.dex" : "classes\(n).dex"
-            guard let bytes = zip.read(name) else { break }
-            if let dex = try? DexFile(bytes: bytes) { dexes.append(dex) }
+            guard zip.contains(name) else { break }
+            names.append(name)
             n += 1
         }
-        dexFiles = dexes
-        for dx in dexes {
-            classCount += dx.classes.count
-            methodCount += dx.methodRefCount
-        }
+        dexNames = names
         nativeLibs = zip.names.filter { $0.hasPrefix("lib/") && $0.hasSuffix(".so") }
         readManifest()
+
+        if scanCode {
+            // One dex at a time, header only; each buffer is freed right away.
+            for name in names {
+                autoreleasepool {
+                    if let bytes = zip.read(name), let c = DexFile.headerCounts(bytes) {
+                        classCount += c.classes
+                        methodCount += c.methods
+                    }
+                }
+            }
+        }
+    }
+
+    /// Size of all code once unpacked, in bytes.
+    var codeSize: Int {
+        return dexNames.reduce(0) { $0 + zip.size(of: $1) }
+    }
+
+    /// Unpacks the dex files (class bodies are still decoded lazily).
+    /// Call off the main thread.
+    func loadCode() {
+        guard !codeLoaded else { return }
+        var dexes: [DexFile] = []
+        for name in dexNames {
+            autoreleasepool {
+                if let bytes = zip.read(name), let dex = try? DexFile(bytes: bytes) { dexes.append(dex) }
+            }
+        }
+        dexFiles = dexes
+        codeLoaded = true
     }
 
     // MARK: - Manifest

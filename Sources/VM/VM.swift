@@ -50,7 +50,8 @@ final class VM {
     let apk: ApkPackage
     weak var host: RunHost?
     private(set) var classes: [String: VMClass] = [:]
-    private var dexClasses: [String: DexClass] = [:]
+    private var foundClasses: [String: DexClass] = [:]
+    private var missingClasses: Set<String> = []
     private var internedStrings: [String: JObject] = [:]
     private var warned: Set<String> = []
     let thread = VMThread()
@@ -75,11 +76,6 @@ final class VM {
 
     init(apk: ApkPackage) {
         self.apk = apk
-        for dex in apk.dexFiles {
-            for (name, c) in dex.classes where dexClasses[name] == nil {
-                dexClasses[name] = c
-            }
-        }
         thread.start()
     }
 
@@ -98,8 +94,22 @@ final class VM {
         return false
     }
 
+    /// The APK's own definition of a class (first dex wins), decoded on demand.
+    func dexClass(_ name: String) -> DexClass? {
+        if let c = foundClasses[name] { return c }
+        if missingClasses.contains(name) { return nil }
+        for dx in apk.dexFiles {
+            if let c = dx.dexClass(name) {
+                foundClasses[name] = c
+                return c
+            }
+        }
+        missingClasses.insert(name)
+        return nil
+    }
+
     func hasAppClass(_ name: String) -> Bool {
-        return !isFrameworkName(name) && dexClasses[name] != nil
+        return !isFrameworkName(name) && apk.dexFiles.contains { $0.hasClass(name) }
     }
 
     func warnOnce(_ s: String) {
@@ -153,7 +163,7 @@ final class VM {
 
     func classFor(_ name: String) -> VMClass {
         if let c = classes[name] { return c }
-        let dc = isFrameworkName(name) ? nil : dexClasses[name]
+        let dc = isFrameworkName(name) ? nil : dexClass(name)
         let c = VMClass(name: name, dex: dc)
         classes[name] = c
         if let dc = dc {
@@ -209,7 +219,7 @@ final class VM {
     func instanceOf(_ o: JObject, _ type: String) -> Bool {
         if type == "Ljava/lang/Object;" { return true }
         if isSubclass(o.cls, of: type) { return true }
-        if isFrameworkName(type) || dexClasses[type] == nil {
+        if isFrameworkName(type) || !hasAppClass(type) {
             return Framework.looselyInstance(self, o, type)
         }
         return false

@@ -60,7 +60,7 @@ final class RunViewController: UIViewController, RunHost {
 
     private func start() {
         appendLog("APK Sandbox – \(apk.label) (\(apk.packageName))")
-        guard !apk.dexFiles.isEmpty else {
+        guard !apk.dexNames.isEmpty else {
             showError(title: "Nothing to run", message: "This APK has no classes.dex, so there is no code to run.")
             return
         }
@@ -71,6 +71,18 @@ final class RunViewController: UIViewController, RunHost {
         if !apk.nativeLibs.isEmpty {
             appendLog("⚠︎ This APK contains native (.so) libraries – calls into native code will fail.")
         }
+        appendLog("Unpacking \(apk.dexNames.count) dex file(s), \(apk.codeSize / 1024) KB…")
+        let apk = self.apk
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            apk.loadCode()
+            DispatchQueue.main.async {
+                guard let self = self, !self.closed else { return }
+                self.launch(launcher)
+            }
+        }
+    }
+
+    private func launch(_ launcher: String) {
         let vm = VM(apk: apk)
         self.vm = vm
         vm.host = self
@@ -81,6 +93,16 @@ final class RunViewController: UIViewController, RunHost {
         vm.post("launch") { [weak vm] in
             try vm?.launchActivity(desc, intent: nil)
         }
+    }
+
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        guard let vm = vm, !closed else { return }
+        // Stop before iOS kills the whole app.
+        vm.shutdown()
+        self.vm = nil
+        showError(title: "Out of memory",
+                  message: "This app needs more memory than this iPhone has, so the sandbox stopped it.")
     }
 
     @objc private func close() {

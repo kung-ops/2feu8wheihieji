@@ -119,7 +119,7 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
     private func loadIcon(_ url: URL) {
         labels[url] = url.deletingPathExtension().lastPathComponent
         iconQueue.async { [weak self] in
-            let pkg = try? ApkPackage(url: url, loadCode: false)
+            let pkg = try? ApkPackage(url: url)
             let img = pkg?.iconImage()
             let name = pkg?.label
             DispatchQueue.main.async {

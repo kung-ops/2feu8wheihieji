@@ -72,7 +72,10 @@ final class ResourceTable {
                 break
             }
         }
-        let isDefault = locale == 0 && !otherQualifiers && d.u32(config + 4) == 0
+        // Translations are skipped: we always show the default language, and big
+        // apps ship ~100 languages, which would cost a lot of memory on an iPhone 6.
+        if locale != 0 { return }
+        let isDefault = !otherQualifiers && d.u32(config + 4) == 0
         let typeName = typeNames[typeId - 1] ?? "type\(typeId)"
         let sparse = (flags & 0x01) != 0
         guard entryCount < 200_000 else { return }

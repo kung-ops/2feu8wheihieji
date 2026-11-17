@@ -28,7 +28,7 @@ final class ApkInfoViewController: UITableViewController {
             guard let self = self else { return }
             var pkg: ApkPackage? = nil
             var err: String? = nil
-            do { pkg = try ApkPackage(url: self.url) } catch { err = error.localizedDescription }
+            do { pkg = try ApkPackage(url: self.url, scanCode: true) } catch { err = error.localizedDescription }
             DispatchQueue.main.async {
                 self.apk = pkg
                 self.error = err
@@ -52,7 +52,7 @@ final class ApkInfoViewController: UITableViewController {
         var info: [Row] = [.info("Package", apk.packageName)]
         if !apk.versionName.isEmpty { info.append(.info("Version", "\(apk.versionName) (\(apk.versionCode))")) }
         if !apk.minSdk.isEmpty { info.append(.info("Android", "min SDK \(apk.minSdk)" + (apk.targetSdk.isEmpty ? "" : ", target \(apk.targetSdk)"))) }
-        info.append(.info("Code", "\(apk.dexFiles.count) dex · \(apk.classCount) classes · \(apk.methodCount) methods"))
+        info.append(.info("Code", "\(apk.dexNames.count) dex · \(apk.classCount) classes · \(apk.methodCount) methods"))
         info.append(.info("Start screen", apk.launcherActivity.map { AndroidLayoutInflater.simpleName($0) } ?? "none"))
         info.append(.info("File size", ApkStore.sizeString(url)))
         sections = [("App", info)]
@@ -62,7 +62,7 @@ final class ApkInfoViewController: UITableViewController {
             let abis = Set(apk.nativeLibs.compactMap { $0.split(separator: "/").dropFirst().first.map(String.init) })
             notes.append(.list("⚠︎ Contains \(apk.nativeLibs.count) native libraries (\(abis.sorted().joined(separator: ", "))). Native Android code can't run on iOS, so parts of this app will not work."))
         }
-        if apk.dexFiles.isEmpty { notes.append(.list("⚠︎ No classes.dex – there is no code to run.")) }
+        if apk.dexNames.isEmpty { notes.append(.list("⚠︎ No classes.dex – there is no code to run.")) }
         if apk.launcherActivity == nil { notes.append(.list("⚠︎ No launcher activity found.")) }
         let heavy = apk.classCount > 3000
         if heavy { notes.append(.list("This is a large app (\(apk.classCount) classes). Large apps usually depend on parts of Android the sandbox doesn't have, so expect missing screens.")) }
@@ -113,6 +113,20 @@ final class ApkInfoViewController: UITableViewController {
 
     @objc private func run() {
         guard let apk = apk else { return }
+        var problems: [String] = []
+        if !apk.nativeLibs.isEmpty { problems.append("it contains native Android code (.so) that can't run on iOS") }
+        if apk.classCount > 8000 { problems.append("it's a very large app (\(apk.classCount) classes) built on Android libraries the sandbox doesn't have") }
+        if apk.codeSize > 60 * 1024 * 1024 { problems.append("its code is \(apk.codeSize / 1_048_576) MB, which may be too much for this iPhone's memory") }
+        if problems.isEmpty { startRun(apk); return }
+        let a = UIAlertController(title: "This app probably won't run",
+                                  message: "APK Sandbox can only run simple apps, and " + problems.joined(separator: "; ") + ".\n\nYou can still try – the log will show what fails.",
+                                  preferredStyle: .alert)
+        a.addAction(UIAlertAction(title: "Try anyway", style: .default) { [weak self] _ in self?.startRun(apk) })
+        a.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        present(a, animated: true)
+    }
+
+    private func startRun(_ apk: ApkPackage) {
         let vc = RunViewController(apk: apk)
         let nav = UINavigationController(rootViewController: vc)
         nav.modalPresentationStyle = .fullScreen
