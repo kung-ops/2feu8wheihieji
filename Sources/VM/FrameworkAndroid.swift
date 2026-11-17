@@ -12,9 +12,28 @@ extension Framework {
             let s = try text(vm, a[0], p[0])
             onMain { box.text = s }
             return .void
-        case "getText":
+        case "getText", "getEditableText":
+            if box.kind == .field {
+                return O(vm.newObject("Landroid/text/SpannableStringBuilder;", native: EditableBox(box)))
+            }
             let s: String = onMain { box.text }
             return S(vm, s)
+        case "length":
+            return I(Int32(onMain { box.text }.utf16.count))
+        case "getSelectionStart", "getSelectionEnd":
+            let count = onMain { box.text }.utf16.count
+            let v = n == "getSelectionStart" ? box.selStart : box.selEnd
+            return I(Int32(v < 0 || v > count ? count : v))
+        case "setSelection":
+            box.selStart = Int(a[0].i)
+            box.selEnd = p.count > 1 ? Int(a[1].i) : Int(a[0].i)
+            return .void
+        case "selectAll":
+            box.selStart = 0
+            box.selEnd = -1
+            return .void
+        case "hasFocus", "isFocused":
+            return B(box.kind == .field)
         case "append":
             let s = try text(vm, a[0], p[0])
             onMain { box.text += s }
@@ -193,10 +212,25 @@ extension Framework {
         case "setSelected", "setActivated", "setPressed", "setRotation", "setScaleX", "setScaleY",
              "setTranslationX", "setTranslationY", "setX", "setY", "setTextIsSelectable", "setHorizontallyScrolling",
              "setCompoundDrawablesWithIntrinsicBounds", "setLayoutDirection", "setImageTintList", "setColorFilter",
-             "setBackgroundTintList", "setIndeterminate", "setKeyListener", "setFilters", "setCursorVisible":
+             "setBackgroundTintList", "setIndeterminate", "setKeyListener", "setFilters", "setCursorVisible",
+             "setShowSoftInputOnFocus", "setSoundEffectsEnabled", "setImportantForAccessibility", "setTooltipText",
+             "setStateListAnimator", "setNextFocusUpId", "setNextFocusDownId", "setNextFocusLeftId", "setNextFocusRightId",
+             "setOnFocusChangeListener", "setOnHoverListener", "setLongClickable", "setHapticFeedbackEnabled",
+             "setTextDirection", "setLayoutDirectionMode", "setAccessibilityDelegate", "setHorizontalScrollBarEnabled",
+             "setVerticalScrollBarEnabled", "setOverScrollMode", "setFocusableInTouchMode", "setTextSelectHandle":
             return .void
         case "animate":
-            return O(vm.newObject("Landroid/view/ViewPropertyAnimator;"))
+            // view.animate()... starts by itself on the next frame, like Android.
+            let (o, anim) = newAnimator(vm, "Landroid/view/ViewPropertyAnimator;")
+            anim.isViewAnimator = true
+            anim.target = t
+            runAnimation(vm, o, anim)
+            return O(o)
+        case "startAnimation":
+            if let o = a.first?.o, let anim = o.native as? AnimatorBox { runAnimation(vm, o, anim) }
+            return .void
+        case "clearAnimation":
+            return .void
         default:
             return nil
         }

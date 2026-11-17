@@ -43,6 +43,20 @@ final class AndroidLayoutInflater {
         return .other
     }
 
+    /// "Plus" → "+", "Division" → "÷" … for icon-only calculator-style keys.
+    static func symbol(for description: String) -> String {
+        let d = description.lowercased().trimmingCharacters(in: .whitespaces)
+        let table: [(String, String)] = [
+            ("plus", "+"), ("add", "+"), ("minus", "−"), ("subtract", "−"), ("multipl", "×"), ("times", "×"),
+            ("divi", "÷"), ("equal", "="), ("calculat", "="), ("result", "="), ("percent", "%"), ("backspace", "⌫"), ("delete", "⌫"),
+            ("clear", "C"), ("parenthes", "( )"), ("bracket", "( )"), ("plus/minus", "±"), ("decimal", "."),
+            ("square root", "√"), ("menu", "☰"), ("more options", "⋮"), ("back", "‹"), ("search", "🔍"),
+            ("settings", "⚙︎"), ("close", "✕"), ("history", "🕘"), ("share", "⇪")
+        ]
+        for (k, v) in table where d.hasPrefix(k) || d == k { return v }
+        return description
+    }
+
     static func isUnsupportedWidget(_ element: String) -> Bool {
         let s = simpleName(element).lowercased()
         return ["webview", "recyclerview", "listview", "gridview", "surfaceview", "textureview",
@@ -147,9 +161,33 @@ final class AndroidLayoutInflater {
         let box = make(node.name, orientation: orientation, hasChildren: !node.children.isEmpty)
         apply(node, to: box)
         if box.kind == .container && depth < 40 {
-            for c in node.children where c.name != "requestFocus" && c.name != "tag" {
-                box.addChild(inflate(c))
+            let kids = node.children.filter { $0.name != "requestFocus" && $0.name != "tag" }
+            // A custom/relative container made mostly of buttons (a keypad) is laid
+            // out as a 4-column grid instead of one long column.
+            let simple = AndroidLayoutInflater.simpleName(node.name).lowercased()
+            let keyLike = kids.filter {
+                let k = AndroidLayoutInflater.kind(for: $0.name, hasChildren: !$0.children.isEmpty)
+                return k == .button || k == .image
+            }.count
+            if kids.count >= 8, keyLike * 10 >= kids.count * 8, !simple.contains("linearlayout"), !simple.contains("scrollview") {
+                box.gridColumns = node.attr("columnCount").map { max(1, min(8, $0.data)) } ?? 4
             }
+            for c in kids { box.addChild(inflate(c)) }
+        }
+        if box.kind == .image, let iv = box.control as? UIImageView, iv.image == nil,
+           let desc = string(node.attr("contentDescription")), !desc.isEmpty {
+            // Vector icons can't be drawn yet; show the icon's meaning as text.
+            let l = UILabel()
+            l.text = AndroidLayoutInflater.symbol(for: desc)
+            l.textAlignment = .center
+            l.font = .systemFont(ofSize: 22)
+            l.translatesAutoresizingMaskIntoConstraints = false
+            iv.addSubview(l)
+            NSLayoutConstraint.activate([
+                l.centerXAnchor.constraint(equalTo: iv.centerXAnchor),
+                l.centerYAnchor.constraint(equalTo: iv.centerYAnchor)
+            ])
+            box.iconLabel = l
         }
         return box
     }
@@ -169,6 +207,12 @@ final class AndroidLayoutInflater {
     private func apply(_ node: AXMLNode, to box: ViewBox) {
         if let idv = node.attr("id"), idv.type == ResValue.typeReference { box.id = idv.data }
         if let t = node.attr("text") { box.text = string(t) ?? "" }
+        // Icon-only buttons (their picture is a vector drawable we can't draw):
+        // show their accessibility description instead, as a symbol if it's a common one.
+        if box.kind == .button, box.text.isEmpty,
+           let desc = string(node.attr("contentDescription") ?? node.attr("tooltipText")), !desc.isEmpty {
+            box.text = AndroidLayoutInflater.symbol(for: desc)
+        }
         if let h = node.attr("hint"), let f = box.control as? UITextField { f.placeholder = string(h) }
         if let ts = node.attr("textSize"), ts.type == ResValue.typeDimension { box.setFontSize(ts.dimension) }
         if let c = resolvedColor(node.attr("textColor")) { box.setTextColor(c) }

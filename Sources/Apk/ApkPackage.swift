@@ -22,6 +22,7 @@ final class ApkPackage {
     private(set) var permissions: [String] = []
     private(set) var activities: [String] = []
     private(set) var launcherActivity: String?
+    private(set) var applicationClass: String?
     private(set) var nativeLibs: [String] = []
     private(set) var classCount = 0
     private(set) var methodCount = 0
@@ -121,6 +122,8 @@ final class ApkPackage {
 
         guard let app = m.children.first(where: { $0.name == "application" }) else { return }
         label = resolveString(app.attr("label"))
+        let appName = resolveString(app.attr("name"))
+        if !appName.isEmpty { applicationClass = fullClassName(appName) }
         if let icon = app.attr("icon"), icon.type == ResValue.typeReference {
             iconPath = resources?.filePath(icon.data, preferBitmap: true)
         }

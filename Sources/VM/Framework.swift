@@ -121,9 +121,21 @@ enum Framework {
         case ("Landroid/os/Build;", "MANUFACTURER"), ("Landroid/os/Build;", "BRAND"): v = .obj(vm.str("Apple"))
         case ("Ljava/lang/Boolean;", "TRUE"): v = .obj(vm.box(.int(1), type: "Z"))
         case ("Ljava/lang/Boolean;", "FALSE"): v = .obj(vm.box(.int(0), type: "Z"))
+        case ("Ljava/math/BigDecimal;", "ZERO"), ("Ljava/math/BigInteger;", "ZERO"),
+             ("Ljava/math/BigDecimal;", "ONE"), ("Ljava/math/BigInteger;", "ONE"),
+             ("Ljava/math/BigDecimal;", "TEN"), ("Ljava/math/BigInteger;", "TEN"),
+             ("Ljava/math/BigInteger;", "TWO"):
+            let n: Decimal = f.name == "ZERO" ? 0 : (f.name == "ONE" ? 1 : (f.name == "TWO" ? 2 : 10))
+            v = .obj(newDecimal(vm, n, integer: f.classDesc == "Ljava/math/BigInteger;"))
         default:
             if f.type == "Ljava/lang/String;" { v = .obj(vm.str("")) }
-            else if f.type.hasPrefix("L") { v = .obj(vm.newObject(f.type)) }
+            else if f.type.hasPrefix("L") {
+                // Placeholder; remembers its field name so enum-like constants
+                // (RoundingMode.HALF_UP, Locale.US, …) can be recognised later.
+                let o = vm.newObject(f.type)
+                o.fields["__name"] = .obj(vm.str(f.name))
+                v = .obj(o)
+            }
             else { v = Value.defaultFor(f.type) }
         }
         c.statics[f.name] = v

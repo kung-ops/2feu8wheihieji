@@ -73,6 +73,46 @@ extension Framework {
             case "compare": return I(arg(0).i < arg(1).i ? -1 : (arg(0).i > arg(1).i ? 1 : 0))
             case "signum": return I(arg(0).i.signum())
             case "hashCode": return I(arg(0).i)
+            case "highestOneBit":
+                let u = UInt32(bitPattern: arg(0).i)
+                return I(u == 0 ? 0 : Int32(bitPattern: UInt32(1) << (31 - UInt32(u.leadingZeroBitCount))))
+            case "lowestOneBit": return I(arg(0).i & (0 &- arg(0).i))
+            case "numberOfLeadingZeros": return I(Int32(UInt32(bitPattern: arg(0).i).leadingZeroBitCount))
+            case "numberOfTrailingZeros": return I(Int32(UInt32(bitPattern: arg(0).i).trailingZeroBitCount))
+            case "bitCount": return I(Int32(UInt32(bitPattern: arg(0).i).nonzeroBitCount))
+            case "reverse":
+                var u = UInt32(bitPattern: arg(0).i), r: UInt32 = 0
+                for _ in 0..<32 { r = (r << 1) | (u & 1); u >>= 1 }
+                return I(Int32(bitPattern: r))
+            case "reverseBytes": return I(Int32(bitPattern: UInt32(bitPattern: arg(0).i).byteSwapped))
+            case "rotateLeft", "rotateRight":
+                let u = UInt32(bitPattern: arg(0).i)
+                var d = UInt32(bitPattern: arg(1).i) & 31
+                if n == "rotateRight" { d = (32 - d) & 31 }
+                return I(Int32(bitPattern: d == 0 ? u : (u << d) | (u >> (32 - d))))
+            case "compareUnsigned":
+                let x = UInt32(bitPattern: arg(0).i), y = UInt32(bitPattern: arg(1).i)
+                return I(x < y ? -1 : (x > y ? 1 : 0))
+            case "divideUnsigned", "remainderUnsigned":
+                let x = UInt32(bitPattern: arg(0).i), y = UInt32(bitPattern: arg(1).i)
+                if y == 0 { throw vm.throwable("Ljava/lang/ArithmeticException;", "/ by zero") }
+                return I(Int32(bitPattern: n == "divideUnsigned" ? x / y : x % y))
+            case "toUnsignedLong": return .val(.wide(Int64(UInt32(bitPattern: arg(0).i))))
+            case "toUnsignedString": return S(vm, String(UInt32(bitPattern: arg(0).i)))
+            case "parseUnsignedInt":
+                let s0 = try str(0) ?? ""
+                guard let v = UInt32(s0) else { throw numberFormat(vm, s0) }
+                return I(Int32(bitPattern: v))
+            case "decode":
+                let s0 = try str(0) ?? ""
+                var t = s0, neg = false
+                if t.hasPrefix("-") { neg = true; t.removeFirst() } else if t.hasPrefix("+") { t.removeFirst() }
+                var radix = 10
+                if t.hasPrefix("0x") || t.hasPrefix("0X") { radix = 16; t.removeFirst(2) }
+                else if t.hasPrefix("#") { radix = 16; t.removeFirst() }
+                else if t.hasPrefix("0") && t.count > 1 { radix = 8; t.removeFirst() }
+                guard let v = Int64(t, radix: radix) else { throw numberFormat(vm, s0) }
+                return O(vm.box(.int(Int32(truncatingIfNeeded: neg ? -v : v)), type: "I"))
             default: return nil
             }
 
@@ -92,6 +132,28 @@ extension Framework {
             case "compare": return I(arg(0).j < arg(1).j ? -1 : (arg(0).j > arg(1).j ? 1 : 0))
             case "max": return .val(.wide(max(arg(0).j, arg(1).j)))
             case "min": return .val(.wide(min(arg(0).j, arg(1).j)))
+            case "sum": return .val(.wide(arg(0).j &+ arg(1).j))
+            case "signum": return I(Int32(arg(0).j.signum()))
+            case "hashCode": return I(Int32(truncatingIfNeeded: arg(0).j ^ (arg(0).j >> 32)))
+            case "highestOneBit":
+                let u = UInt64(bitPattern: arg(0).j)
+                return .val(.wide(u == 0 ? 0 : Int64(bitPattern: UInt64(1) << (63 - UInt64(u.leadingZeroBitCount)))))
+            case "lowestOneBit": return .val(.wide(arg(0).j & (0 &- arg(0).j)))
+            case "numberOfLeadingZeros": return I(Int32(UInt64(bitPattern: arg(0).j).leadingZeroBitCount))
+            case "numberOfTrailingZeros": return I(Int32(UInt64(bitPattern: arg(0).j).trailingZeroBitCount))
+            case "bitCount": return I(Int32(UInt64(bitPattern: arg(0).j).nonzeroBitCount))
+            case "reverseBytes": return .val(.wide(Int64(bitPattern: UInt64(bitPattern: arg(0).j).byteSwapped)))
+            case "rotateLeft", "rotateRight":
+                let u = UInt64(bitPattern: arg(0).j)
+                var d = UInt64(bitPattern: Int64(arg(1).i)) & 63
+                if n == "rotateRight" { d = (64 - d) & 63 }
+                return .val(.wide(Int64(bitPattern: d == 0 ? u : (u << d) | (u >> (64 - d)))))
+            case "toHexString": return S(vm, String(UInt64(bitPattern: arg(0).j), radix: 16))
+            case "toBinaryString": return S(vm, String(UInt64(bitPattern: arg(0).j), radix: 2))
+            case "compareUnsigned":
+                let x = UInt64(bitPattern: arg(0).j), y = UInt64(bitPattern: arg(1).j)
+                return I(x < y ? -1 : (x > y ? 1 : 0))
+            case "toUnsignedString": return S(vm, String(UInt64(bitPattern: arg(0).j)))
             default: return nil
             }
 
@@ -547,7 +609,7 @@ extension Framework {
             return nil
 
         default:
-            return nil
+            return try moreStatic(vm, ref, a)
         }
     }
 }

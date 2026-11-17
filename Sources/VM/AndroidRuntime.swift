@@ -80,8 +80,17 @@ extension VM {
     @discardableResult
     func wrap(_ box: ViewBox, in host: ActivityHost?, desc: String? = nil) -> JObject {
         if let existing = box.jobj { return existing }
-        let obj = JObject(cls: classFor(desc ?? classDescriptor(forElement: box.elementName)), native: box)
+        // A custom view from the app itself (e.g. <com.example.MyTextView>) becomes
+        // a real instance of the app's class, so the app can cast to it and its
+        // overridden methods run. Its native part is still the UIKit view.
+        var appClass: VMClass? = nil
+        if desc == nil, box.elementName.contains(".") {
+            let d = VMClass.descriptor(box.elementName)
+            if hasAppClass(d) { appClass = classFor(d) }
+        }
+        let obj = JObject(cls: appClass ?? classFor(desc ?? classDescriptor(forElement: box.elementName)), native: box)
         box.jobj = obj
+        if let c = appClass { constructCustomView(obj, c, host: host) }
         host?.viewObjects.append(obj)
         if host == nil { orphanViews.append(obj) }
         box.handler = { [weak self, weak obj] b, event, value in
@@ -90,6 +99,31 @@ extension VM {
         }
         for c in box.children { wrap(c, in: host) }
         return obj
+    }
+
+    /// Runs the app's View constructor: (Context, AttributeSet) or (Context).
+    private func constructCustomView(_ obj: JObject, _ c: VMClass, host: ActivityHost?) {
+        guard let dc = c.dex else { return }
+        let ctx: Value = .obj(host?.activity ?? currentActivity?.activity)
+        let attrs: Value = .obj(newObject("Landroid/util/AttributeSet;"))
+        let candidates: [(String, [Value])] = [
+            ("<init>(Landroid/content/Context;Landroid/util/AttributeSet;)V", [ctx, attrs]),
+            ("<init>(Landroid/content/Context;Landroid/util/AttributeSet;I)V", [ctx, attrs, .zero]),
+            ("<init>(Landroid/content/Context;)V", [ctx])
+        ]
+        do {
+            try ensureInit(c)
+            for (sig, args) in candidates {
+                if let m = dc.methods[sig], m.code != nil {
+                    _ = try execute(m, [.obj(obj)] + args)
+                    return
+                }
+            }
+        } catch let t as JavaThrow {
+            warnOnce("custom view \(c.javaName) constructor failed: \(describeThrowable(t.obj))")
+        } catch {
+            warnOnce("custom view \(c.javaName) constructor failed: \(error)")
+        }
     }
 
     private func dispatchEvent(_ b: ViewBox, _ o: JObject, _ event: String, _ value: Int32, _ host: ActivityHost?) throws {
@@ -186,6 +220,10 @@ extension VM {
             return "[" + parts.joined(separator: ", ") + "]"
         case let v as ViewBox:
             return onMain { v.text }
+        case let e as EditableBox:
+            return onMain { e.box.text }
+        case let d as DecimalBox:
+            return Framework.plainString(d.value, scale: d.isInteger ? nil : o.fields["__scale"].map { Int($0.i) })
         case let c as ClassRef:
             return "class " + VMClass.javaName(c.name)
         default:
@@ -281,7 +319,8 @@ extension VM {
                 }
                 out += s
             case "f", "e", "g":
-                let d = (arg?.native as? Boxed)?.asDouble ?? 0
+                var d = (arg?.native as? Boxed)?.asDouble ?? 0
+                if let db = arg?.native as? DecimalBox { d = NSDecimalNumber(decimal: db.value).doubleValue }
                 out += String(format: "%" + cspec + String(conv), d)
             case "x", "X", "o":
                 var n: Int64 = 0

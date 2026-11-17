@@ -11,6 +11,10 @@ final class ViewBox: NSObject {
     let view: UIView            // outer view placed in the hierarchy
     let control: UIView         // the interactive / text-bearing part
     var checkLabel: UILabel?    // text of a CheckBox / Switch
+    var iconLabel: UILabel?     // stand-in text for an icon we can't draw
+    /// > 0: children are arranged in rows of this many (keypads).
+    var gridColumns = 0
+    private var gridRows: [UIStackView] = []
     var stack: UIStackView? { return control as? UIStackView }
 
     // VM-thread state
@@ -24,6 +28,9 @@ final class ViewBox: NSObject {
     weak var parent: ViewBox?
     weak var jobj: JObject?
     var maxProgress: Int32 = 100
+    /// Cursor / selection (UTF-16 offsets); -1 means "end of text".
+    var selStart: Int = -1
+    var selEnd: Int = -1
 
     /// Called on the main thread when the user interacts: (box, event, int value)
     var handler: ((ViewBox, String, Int32) -> Void)?
@@ -36,6 +43,7 @@ final class ViewBox: NSObject {
         self.view = view
         self.control = control
         super.init()
+        #if canImport(ObjectiveC)
         switch kind {
         case .button:
             (control as? UIButton)?.addTarget(self, action: #selector(tapped), for: .touchUpInside)
@@ -46,6 +54,7 @@ final class ViewBox: NSObject {
         default:
             break
         }
+        #endif
     }
 
     /// Lets non-button views receive clicks once a listener is attached.
@@ -53,18 +62,27 @@ final class ViewBox: NSObject {
         guard !tapInstalled, kind != .button, kind != .check, kind != .slider, kind != .field else { return }
         tapInstalled = true
         view.isUserInteractionEnabled = true
+        #if canImport(ObjectiveC)
         view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
+        #endif
     }
 
-    @objc private func tapped() { handler?(self, "click", 0) }
-    @objc private func switched() {
+    /// Same as the user tapping / toggling / sliding this view.
+    func tap() { handler?(self, "click", 0) }
+    func toggle() {
         let on = (control as? UISwitch)?.isOn ?? false
         handler?(self, "checked", on ? 1 : 0)
     }
-    @objc private func slid() {
+    func slide() {
         let v = (control as? UISlider)?.value ?? 0
         handler?(self, "progress", Int32(v))
     }
+
+    #if canImport(ObjectiveC)
+    @objc private func tapped() { tap() }
+    @objc private func switched() { toggle() }
+    @objc private func slid() { slide() }
+    #endif
 
     // MARK: main-thread accessors
 
@@ -145,7 +163,22 @@ final class ViewBox: NSObject {
     func addChild(_ c: ViewBox) {
         c.parent = self
         children.append(c)
-        if let s = stack { s.addArrangedSubview(c.view) } else { control.addSubview(c.view) }
+        if gridColumns > 0, let s = stack {
+            if gridRows.last == nil || gridRows.last!.arrangedSubviews.count >= gridColumns {
+                let row = UIStackView()
+                row.axis = .horizontal
+                row.distribution = .fillEqually
+                row.alignment = .fill
+                row.spacing = 8
+                s.addArrangedSubview(row)
+                gridRows.append(row)
+            }
+            gridRows.last!.addArrangedSubview(c.view)
+        } else if let s = stack {
+            s.addArrangedSubview(c.view)
+        } else {
+            control.addSubview(c.view)
+        }
     }
 
     func removeAllChildren() {
@@ -153,6 +186,8 @@ final class ViewBox: NSObject {
             c.view.removeFromSuperview()
             c.parent = nil
         }
+        for r in gridRows { r.removeFromSuperview() }
+        gridRows.removeAll()
         children.removeAll()
     }
 

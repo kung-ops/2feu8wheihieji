@@ -115,6 +115,10 @@ extension Framework {
             case "hide", "show", "setDisplayHomeAsUpEnabled", "setHomeButtonEnabled", "setDisplayShowTitleEnabled": r = .void
             default: break
             }
+        case let ab as AnimatorBox: r = try animatorMethod(vm, t, ab, ref, a)
+        case let db as DecimalBox: r = try decimalMethod(vm, t, db, ref, a)
+        case let nf as NumberFormatBox: r = try numberFormatMethod(vm, t, nf, ref, a)
+        case let eb as EditableBox: r = try editableMethod(vm, t, eb, ref, a)
         case let rb as RefBox:
             switch n {
             case "get":
@@ -180,6 +184,7 @@ extension Framework {
         default:
             break
         }
+        if r == nil, t.native == nil { r = plainObjectMethod(vm, t, ref, a) }
         if let r = r { return r }
 
         // Enum (every app enum extends java.lang.Enum)
@@ -322,6 +327,7 @@ extension Framework {
         case "Ljava/lang/Float;": t.native = Boxed(.float, a[0])
         case "Ljava/lang/Boolean;": t.native = Boxed(.bool, a[0])
         default:
+            if let r = try moreConstruct(vm, t, ref, a) { return r }
             if isViewClass(vm, c) {
                 vm.createView(c, for: t, context: a.first?.o)
                 return .void
@@ -457,6 +463,11 @@ extension Framework {
             return O(vm.newObject("[B", native: JArray(type: "[B", items: items)))
         case "repeat":
             return S(vm, String(repeating: s, count: max(0, Int(a[0].i))))
+        case "getSpans":
+            return O(vm.newObject(ref.ret, native: JArray(type: ref.ret, items: [])))
+        case "getSpanStart", "getSpanEnd": return I(-1)
+        case "getSpanFlags": return I(0)
+        case "nextSpanTransition": return I(a.count > 1 ? a[1].i : 0)
         default:
             return nil
         }
@@ -526,6 +537,17 @@ extension Framework {
         case "indexOf", "lastIndexOf", "substring", "contains", "startsWith", "endsWith":
             return try stringMethod(vm, vm.str(sb.s), sb.s, ref, a)
         case "capacity": return I(Int32(sb.s.utf16.count + 16))
+        case "subSequence":
+            let u = units(sb.s)
+            let b = max(0, min(u.count, Int(a[0].i))), e = max(b, min(u.count, Int(a[1].i)))
+            return S(vm, fromUnits(u[b..<e]))
+        case "getSpans":
+            return O(vm.newObject(ref.ret, native: JArray(type: ref.ret, items: [])))
+        case "getSpanStart", "getSpanEnd": return I(-1)
+        case "getSpanFlags": return I(0)
+        case "nextSpanTransition": return I(a.count > 1 ? a[1].i : 0)
+        case "setSpan", "removeSpan", "clearSpans", "setFilters": return .void
+        case "clear": sb.s = ""; return .void
         default: return nil
         }
     }

@@ -123,10 +123,12 @@ final class VM {
         return nil
     }
 
-    /// Walks each activity's superclasses. Anything between the app's own
-    /// classes and android.app.Activity that lives outside the app's package is
-    /// AndroidX / support library code (often renamed by R8), so it is handled
-    /// by the built-in Activity stubs instead of being interpreted.
+    /// Finds "bridge" library classes: superclasses that sit between the app's
+    /// own classes and a real Android class (android.app.Activity,
+    /// android.widget.EditText, …) but live outside the app's package —
+    /// typically AndroidX AppCompat/Material classes renamed by R8 (e.g. "Lp/j;").
+    /// They depend on Android internals (themes, windows, delegates), so they are
+    /// handled by the built-in Android stand-ins instead of being interpreted.
     private func findLibraryActivityParents() {
         func pkg(_ desc: String) -> String {
             guard let slash = desc.lastIndex(of: "/") else { return "L" }
@@ -134,26 +136,113 @@ final class VM {
         }
         var own: Set<String> = [pkg(VMClass.descriptor(apk.packageName + ".X"))]
         for a in apk.activities { own.insert(pkg(VMClass.descriptor(a))) }
+        if let app = apk.applicationClass { own.insert(pkg(VMClass.descriptor(app))) }
+        own = own.filter { $0.count > 3 }
         func isOwn(_ desc: String) -> Bool {
-            for p in own where p.count > 2 && desc.hasPrefix(p) { return true }
+            for p in own where desc.hasPrefix(p) { return true }
             return false
         }
-        for a in apk.activities {
-            var cur = dexClass(VMClass.descriptor(a))?.superDesc
-            var steps = 0
-            var sawLibrary = false
-            while let sup = cur, steps < 20, !VM.frameworkPrefixes.contains(where: { sup.hasPrefix($0) }) {
-                if sawLibrary || !isOwn(sup) {
-                    sawLibrary = true
-                    libraryClasses[sup] = "Landroid/app/Activity;"
+        func superOf(_ desc: String) -> String? {
+            for dx in apk.dexFiles where dx.hasClass(desc) { return dx.superclassOf(desc) }
+            return nil
+        }
+        func inApk(_ desc: String) -> Bool {
+            return apk.dexFiles.contains { $0.hasClass(desc) }
+        }
+        var done: Set<String> = []
+        for dx in apk.dexFiles {
+            for name in dx.classNames where isOwn(name) && !done.contains(name) {
+                done.insert(name)
+                // Walk up (through bundled AndroidX too) to the first class that
+                // the real Android OS provides, e.g. android.app.Activity.
+                var chain: [String] = []
+                var cur = superOf(name)
+                while let c = cur, chain.count < 30, inApk(c), !c.hasPrefix("Landroid/"), !c.hasPrefix("Ljava/") {
+                    chain.append(c)
+                    cur = superOf(c)
                 }
-                cur = dexClass(sup)?.superDesc
-                steps += 1
+                guard let terminal = cur, terminal.hasPrefix("Landroid/") else { continue }
+                if terminal == "Landroid/app/Activity;" {
+                    // Activities: R8 may rename the app's own base classes too (YouTube),
+                    // so find AndroidX by the text it contains, e.g. "androidx:appcompat".
+                    // That class and everything above it is library code.
+                    if let k = chain.firstIndex(where: { isAndroidXActivity($0) }) {
+                        for c in chain[k...] { libraryClasses[c] = terminal }
+                    }
+                    continue
+                }
+                var bridging = false
+                for c in chain {
+                    if !isOwn(c) { bridging = true }
+                    if bridging { libraryClasses[c] = terminal }
+                }
             }
         }
         if !libraryClasses.isEmpty {
-            libraryNote = "ℹ︎ Treating \(libraryClasses.count) bundled library activity class(es) as Android: " +
-                libraryClasses.keys.sorted().prefix(4).map { VMClass.javaName($0) }.joined(separator: ", ")
+            libraryNote = "ℹ︎ Treating \(libraryClasses.count) bundled library class(es) as Android, e.g. " +
+                libraryClasses.keys.sorted().prefix(4).map { VMClass.javaName($0) + "→" + AndroidLayoutInflater.simpleName(libraryClasses[$0] ?? "") }.joined(separator: ", ")
+        }
+    }
+
+    /// AndroidX's AppCompatActivity / FragmentActivity / ComponentActivity, even
+    /// when renamed: recognised by their package name or the strings they use.
+    private var androidXCache: [String: Bool] = [:]
+    func isAndroidXActivity(_ desc: String) -> Bool {
+        if desc.hasPrefix("Landroidx/") || desc.hasPrefix("Landroid/support/") { return true }
+        if let v = androidXCache[desc] { return v }
+        let markers = ["androidx:appcompat", "android:support:activity-result", "Local FragmentActivity",
+                       "android:support:lifecycle", "androidx.activity.result.contract"]
+        var found = false
+        if let dc = dexClass(desc) {
+            outer: for m in dc.methods.values {
+                guard let code = m.code else { continue }
+                for s in VM.constStrings(code, m.dex) where markers.contains(where: { s.hasPrefix($0) }) {
+                    found = true
+                    break outer
+                }
+            }
+        }
+        androidXCache[desc] = found
+        return found
+    }
+
+    /// All const-string literals in a method.
+    static func constStrings(_ code: DexCode, _ dex: DexFile) -> [String] {
+        var out: [String] = []
+        let u = code.insns
+        var pc = 0
+        while pc < u.count {
+            let w = Int(u[pc])
+            let op = w & 0xff
+            if op == 0x1a, pc + 1 < u.count { out.append(dex.string(Int(u[pc + 1]))) }
+            if op == 0x1b, pc + 2 < u.count { out.append(dex.string(Int(u[pc + 1]) | (Int(u[pc + 2]) << 16))) }
+            pc += max(1, insnWidth(u, pc))
+        }
+        return out
+    }
+
+    /// Length in 16-bit code units of the instruction at pc (including switch / array payloads).
+    static func insnWidth(_ u: [UInt16], _ pc: Int) -> Int {
+        let w = Int(u[pc])
+        let op = w & 0xff
+        func at(_ i: Int) -> Int { return pc + i < u.count ? Int(u[pc + i]) : 0 }
+        switch op {
+        case 0x00:
+            switch w {
+            case 0x0100: return 4 + at(1) * 2
+            case 0x0200: return 2 + at(1) * 4
+            case 0x0300:
+                let width = at(1), size = at(2) | (at(3) << 16)
+                return 4 + (size * width + 1) / 2
+            default: return 1
+            }
+        case 0x02, 0x05, 0x08, 0x13, 0x15, 0x16, 0x19, 0x1a, 0x1c, 0x1f, 0x20, 0x22, 0x23, 0x29, 0xfe, 0xff: return 2
+        case 0x03, 0x06, 0x09, 0x14, 0x17, 0x1b, 0x24, 0x25, 0x26, 0x2a, 0x2b, 0x2c, 0xfc, 0xfd: return 3
+        case 0x18: return 5
+        case 0x2d...0x3d, 0x44...0x6d, 0x90...0xaf, 0xd0...0xe2: return 2
+        case 0x6e...0x72, 0x74...0x78: return 3
+        case 0xfa, 0xfb: return 4
+        default: return 1
         }
     }
 

@@ -131,6 +131,15 @@ final class DexFile {
 
     func hasClass(_ desc: String) -> Bool { return classIndex[desc] != nil }
 
+    var classNames: Dictionary<String, Int>.Keys { return classIndex.keys }
+
+    /// Superclass descriptor straight from class_defs, without decoding the class.
+    func superclassOf(_ desc: String) -> String? {
+        guard let i = classIndex[desc] else { return nil }
+        let idx = d.u32(classDefsOff + i * 32 + 8)
+        return idx == 0xFFFFFFFF ? nil : type(idx)
+    }
+
     /// Decodes one class on first use.
     func dexClass(_ desc: String) -> DexClass? {
         if let c = parsed[desc] { return c }
@@ -159,10 +168,14 @@ final class DexFile {
                 units.append(UInt16(a))
             } else if a & 0xe0 == 0xc0 {
                 let b = d.u8(p); p += 1
-                units.append(UInt16(((a & 0x1f) << 6) | (b & 0x3f)))
+                let hi: Int = (a & 0x1f) << 6
+                units.append(UInt16(truncatingIfNeeded: hi | (b & 0x3f)))
             } else if a & 0xf0 == 0xe0 {
                 let b = d.u8(p), c = d.u8(p + 1); p += 2
-                units.append(UInt16(((a & 0x0f) << 12) | ((b & 0x3f) << 6) | (c & 0x3f)))
+                let hi: Int = (a & 0x0f) << 12
+                let mid: Int = (b & 0x3f) << 6
+                let lo: Int = c & 0x3f
+                units.append(UInt16(truncatingIfNeeded: hi | mid | lo))
             } else {
                 units.append(0xfffd)
             }

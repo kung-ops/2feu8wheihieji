@@ -154,3 +154,43 @@ final class RefBox {
         isSet = !threadLocal
     }
 }
+
+/// java.math.BigDecimal / BigInteger, backed by Foundation's Decimal (38 digits).
+final class DecimalBox {
+    let value: Decimal
+    let isInteger: Bool
+    init(_ v: Decimal, integer: Bool = false) { value = v; isInteger = integer }
+}
+
+/// java.text.NumberFormat / DecimalFormat
+final class NumberFormatBox {
+    var maxFraction = 3
+    var minFraction = 0
+    var grouping = true
+    var minInteger = 1
+}
+
+/// The live, editable text of an EditText (android.text.Editable).
+final class EditableBox {
+    let box: ViewBox
+    init(_ b: ViewBox) { box = b }
+}
+
+/// ValueAnimator / ObjectAnimator / AnimatorSet / ViewPropertyAnimator.
+/// The sandbox doesn't animate: start() jumps to the end and calls the
+/// app's listeners (update → end), which is what apps wait for.
+final class AnimatorBox {
+    var endValue: Value = .null
+    var target: JObject?
+    var property: String?
+    var listeners: [JObject] = []
+    var updateListeners: [JObject] = []
+    var children: [JObject] = []
+    var endActions: [JObject] = []
+    var startActions: [JObject] = []
+    var duration: Int64 = 300
+    var started = false
+    var finished = false
+    var isViewAnimator = false
+    var alpha: Float?
+}

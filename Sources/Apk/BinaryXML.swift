@@ -73,7 +73,8 @@ enum BinaryXML {
         0x010100f4: "layout_width", 0x010100f5: "layout_height",
         0x01010097: "textStyle", 0x01010107: "checked", 0x01010220: "inputType",
         0x0101000e: "enabled", 0x01010176: "max", 0x01010137: "progress",
-        0x01010010: "exported", 0x0101001e: "theme"
+        0x01010010: "exported", 0x0101001e: "theme", 0x01010273: "contentDescription",
+        0x0101057a: "tooltipText"
     ]
 
     static func parse(_ bytes: [UInt8]) -> AXMLNode? {
