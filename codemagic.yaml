@@ -1,12 +1,12 @@
 workflows:
   modern-ios:
     name: Modern iOS build (unsigned)
-    instance_type: mac_mini_m2
+    # Xcode 15.4 is the ONLY Xcode that builds working iOS 12 apps, and on
+    # Codemagic it lives on the M4 machines — not the default M2. If this
+    # instance isn't on your plan, the build will say so (see notes below).
+    instance_type: mac_mini_m4
     max_build_duration: 30
     environment:
-      # Xcode 15.4 reliably supports an iOS 12.0 deployment target.
-      # If this image is unavailable, change it to another 15.x version
-      # that Codemagic lists for your account.
       xcode: 15.4
     scripts:
       - name: Install XcodeGen
