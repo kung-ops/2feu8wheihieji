@@ -59,7 +59,7 @@ final class RunViewController: UIViewController, RunHost {
     }
 
     private func start() {
-        appendLog("APK Sandbox – \(apk.label) (\(apk.packageName))")
+        appendLog("APK Sandbox build \(buildCommit) – \(apk.label) (\(apk.packageName))")
         guard !apk.dexNames.isEmpty else {
             showError(title: "Nothing to run", message: "This APK has no classes.dex, so there is no code to run.")
             return

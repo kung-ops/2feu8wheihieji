@@ -65,7 +65,7 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
 
         Not supported: native code (.so), games/OpenGL, WebView, lists (RecyclerView), Google Play services, networking.
         """
-        let a = UIAlertController(title: "About", message: msg, preferredStyle: .alert)
+        let a = UIAlertController(title: "About (build \(buildCommit))", message: msg, preferredStyle: .alert)
         a.addAction(UIAlertAction(title: "OK", style: .default))
         present(a, animated: true)
     }

@@ -15,6 +15,11 @@ workflows:
       - name: Install XcodeGen
         script: |
           brew install xcodegen
+      - name: Stamp build with commit id
+        script: |
+          COMMIT=$(git rev-parse --short=7 HEAD)
+          echo "let buildCommit = \"$COMMIT\"" > Sources/BuildInfo.swift
+          echo "Building commit $COMMIT"
       - name: Generate the Xcode project
         script: |
           xcodegen generate
