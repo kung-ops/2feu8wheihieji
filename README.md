@@ -47,8 +47,12 @@ Sources/
    **apk-sandbox-ios** workflow. If you're building from a branch, pick that
    branch.
 2. Codemagic runs `xcodegen` to create `ApkSandbox.xcodeproj`, builds with
-   Xcode 15.4 (the last Xcode that targets iOS 12), and gives you an unsigned
-   **`ApkSandbox.ipa`** as the build artifact.
+   Xcode 16.4, and gives you an unsigned **`ApkSandbox.ipa`** as the build
+   artifact. Codemagic no longer has Xcode 15. Apple officially lists iOS 15
+   as Xcode 16's minimum target, but sideloaded builds with an iOS 12.0 target
+   still run on iOS 12.
+3. Your iPhone should be on **iOS 12.2 or newer** (an iPhone 6 can update to
+   12.5.7). Older iOS 12 versions don't include the Swift runtime.
 
 ## Install on your iPhone
 The IPA is unsigned, so sign it with your **free Apple ID** using
