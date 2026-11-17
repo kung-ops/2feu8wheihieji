@@ -115,6 +115,26 @@ extension Framework {
             case "hide", "show", "setDisplayHomeAsUpEnabled", "setHomeButtonEnabled", "setDisplayShowTitleEnabled": r = .void
             default: break
             }
+        case let rb as RefBox:
+            switch n {
+            case "get":
+                if rb.isThreadLocal && !rb.isSet {
+                    // ThreadLocal.initialValue(): app override or withInitial(supplier)
+                    if let sup = rb.supplier {
+                        rb.value = try vm.call(sup, "get", ret: "Ljava/lang/Object;") ?? .null
+                    } else if t.cls.isApp, vm.findVirtual(t.cls, "initialValue()Ljava/lang/Object;") != nil {
+                        rb.value = try vm.call(t, "initialValue", ret: "Ljava/lang/Object;") ?? .null
+                    }
+                    rb.isSet = true
+                }
+                r = .val(rb.value)
+            case "set": rb.value = a[0]; rb.isSet = true; r = .void
+            case "remove": rb.value = .null; rb.isSet = !rb.isThreadLocal; r = .void
+            case "clear": rb.value = .null; r = .void
+            case "enqueue", "isEnqueued": r = B(false)
+            case "refersTo": r = B(vm.sameValue(rb.value, a[0]))
+            default: break
+            }
         case let ab as AtomicBox: r = try atomicMethod(vm, t, ab, ref, a)
         case let fu as FieldUpdaterBox: r = try updaterMethod(vm, fu, ref, a)
         case is ExecutorBox:
@@ -275,6 +295,11 @@ extension Framework {
             let th = ThreadBox()
             if let f = p.first, f == "Ljava/lang/Runnable;" { th.runnable = a[0].o }
             t.native = th
+        case "Ljava/lang/ref/WeakReference;", "Ljava/lang/ref/SoftReference;", "Ljava/lang/ref/PhantomReference;",
+             "Ljava/lang/ref/Reference;":
+            t.native = RefBox(a.first ?? .null)
+        case "Ljava/lang/ThreadLocal;", "Ljava/lang/InheritableThreadLocal;":
+            t.native = RefBox(.null, threadLocal: true)
         case "Ljava/lang/Enum;":
             // Enum(String name, int ordinal) — called by every enum constant
             t.fields["__name"] = a.count > 0 ? a[0] : .null

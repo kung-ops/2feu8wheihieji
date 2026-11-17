@@ -500,6 +500,14 @@ extension Framework {
             }
             return nil
 
+        case "Ljava/lang/ThreadLocal;":
+            if n == "withInitial" {
+                let rb = RefBox(.null, threadLocal: true)
+                rb.supplier = arg(0).o
+                return O(vm.newObject("Ljava/lang/ThreadLocal;", native: rb))
+            }
+            return nil
+
         case "Ljava/lang/Enum;":
             if n == "valueOf", let cr = arg(0).o?.native as? ClassRef {
                 let name = try str(1) ?? ""

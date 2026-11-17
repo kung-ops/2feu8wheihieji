@@ -139,3 +139,18 @@ final class ExecutorBox {}
 final class LockBox {}
 
 final class LooperBox {}
+
+/// WeakReference / SoftReference / ThreadLocal: holds one value.
+/// (The sandbox keeps referents alive; there is a single thread, so a
+/// ThreadLocal is just a box.)
+final class RefBox {
+    var value: Value = .null
+    var isSet = false
+    let isThreadLocal: Bool
+    var supplier: JObject?
+    init(_ v: Value, threadLocal: Bool = false) {
+        value = v
+        isThreadLocal = threadLocal
+        isSet = !threadLocal
+    }
+}
