@@ -1,14 +1,17 @@
 workflows:
   apk-sandbox-ios:
     name: APK Sandbox iOS build (unsigned IPA)
-    # Xcode 15.4 is the ONLY Xcode that builds working iOS 12 apps, and on
-    # Codemagic it lives on the M4 machines — not the default M2. If this
-    # instance isn't on your plan, the build will say so (see notes below).
-    instance_type: mac_mini_m4
-    max_build_duration: 30
+    # Codemagic removed Xcode 15. Xcode 16.4 is the oldest Xcode left, and it
+    # still produces binaries that run on iOS 12 when sideloaded (Apple only
+    # blocks iOS 12 for App Store / TestFlight installs, which we don't use).
+    instance_type: mac_mini_m2
+    max_build_duration: 45
     environment:
-      xcode: 15.4
+      xcode: 16.4
     scripts:
+      - name: Show Xcode version
+        script: |
+          xcodebuild -version
       - name: Install XcodeGen
         script: |
           brew install xcodegen
@@ -26,6 +29,7 @@ workflows:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
+            IPHONEOS_DEPLOYMENT_TARGET=12.0 \
             clean build
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/ApkSandbox.app Payload/
