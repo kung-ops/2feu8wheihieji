@@ -1,6 +1,6 @@
 workflows:
-  modern-ios:
-    name: Modern iOS build (unsigned)
+  apk-sandbox-ios:
+    name: APK Sandbox iOS build (unsigned IPA)
     # Xcode 15.4 is the ONLY Xcode that builds working iOS 12 apps, and on
     # Codemagic it lives on the M4 machines — not the default M2. If this
     # instance isn't on your plan, the build will say so (see notes below).
@@ -18,8 +18,8 @@ workflows:
       - name: Build unsigned IPA
         script: |
           xcodebuild \
-            -project Modern.xcodeproj \
-            -scheme Modern \
+            -project ApkSandbox.xcodeproj \
+            -scheme ApkSandbox \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
@@ -28,7 +28,7 @@ workflows:
             CODE_SIGNING_ALLOWED=NO \
             clean build
           mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/Modern.app Payload/
-          zip -r Modern.ipa Payload
+          cp -R build/Build/Products/Release-iphoneos/ApkSandbox.app Payload/
+          zip -qr ApkSandbox.ipa Payload
     artifacts:
-      - Modern.ipa
+      - ApkSandbox.ipa
