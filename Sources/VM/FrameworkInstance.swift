@@ -73,8 +73,11 @@ extension Framework {
             case "run":
                 if let rn = th.runnable { try vm.call(rn, "run") }
                 r = .void
-            case "join", "interrupt", "setDaemon", "setName", "setPriority": r = .void
-            case "isAlive", "isInterrupted": r = B(false)
+            case "join", "interrupt", "setDaemon", "setName", "setPriority", "setUncaughtExceptionHandler": r = .void
+            case "isAlive", "isInterrupted", "isDaemon": r = B(false)
+            case "getName": r = S(vm, t === vm.mainThread ? "main" : "Thread-1")
+            case "getId": r = .val(.wide(t === vm.mainThread ? 1 : 2))
+            case "getLooper": r = O(vm.mainLooper)
             default: break
             }
         case let pb as PrefsBox: r = prefsMethod(vm, pb, ref, a)
@@ -112,12 +115,70 @@ extension Framework {
             case "hide", "show", "setDisplayHomeAsUpEnabled", "setHomeButtonEnabled", "setDisplayShowTitleEnabled": r = .void
             default: break
             }
+        case let ab as AtomicBox: r = try atomicMethod(vm, t, ab, ref, a)
+        case let fu as FieldUpdaterBox: r = try updaterMethod(vm, fu, ref, a)
+        case is ExecutorBox:
+            switch n {
+            case "execute", "submit", "invokeAll", "invokeAny":
+                if let task = a.first?.o {
+                    let isCallable = ref.params.first == "Ljava/util/concurrent/Callable;"
+                    vm.post("executor") { [weak vm] in
+                        _ = try vm?.call(task, isCallable ? "call" : "run", ret: isCallable ? "Ljava/lang/Object;" : "V")
+                    }
+                }
+                r = ref.ret == "V" ? .void : O(vm.newObject("Ljava/util/concurrent/FutureTask;"))
+            case "schedule", "scheduleAtFixedRate", "scheduleWithFixedDelay":
+                if let task = a.first?.o { schedule(vm, task, delayMs: a.count > 1 ? a[1].j : 0) }
+                r = O(vm.newObject("Ljava/util/concurrent/ScheduledFuture;"))
+            case "shutdown", "shutdownNow", "allowCoreThreadTimeOut", "setRejectedExecutionHandler",
+                 "setKeepAliveTime", "setCorePoolSize", "setMaximumPoolSize", "prestartAllCoreThreads":
+                r = ref.ret == "V" ? .void : stubRet(vm, ref)
+            case "isShutdown", "isTerminated": r = B(false)
+            case "awaitTermination": r = B(true)
+            default: break
+            }
+        case is LockBox:
+            switch n {
+            case "lock", "unlock", "lockInterruptibly", "acquire", "release", "countDown", "await", "signal", "signalAll":
+                r = ref.ret == "Z" ? B(true) : .void
+            case "tryLock", "tryAcquire": r = B(true)
+            case "isLocked", "isHeldByCurrentThread", "hasQueuedThreads", "isWriteLocked": r = B(false)
+            case "readLock", "writeLock", "newCondition": r = O(t)
+            case "getCount", "availablePermits", "getHoldCount": r = I(0)
+            default: break
+            }
+        case is LooperBox:
+            switch n {
+            case "getThread": r = O(vm.mainThread)
+            case "isCurrentThread": r = B(true)
+            case "quit", "quitSafely": r = .void
+            case "getQueue": r = O(vm.newObject("Landroid/os/MessageQueue;"))
+            default: break
+            }
         case let arr as JArray:
             if n == "clone" { r = O(vm.newObject(arr.type, native: JArray(type: arr.type, items: arr.items))) }
         default:
             break
         }
         if let r = r { return r }
+
+        // Enum (every app enum extends java.lang.Enum)
+        if t.fields["__ordinal"] != nil, vm.isSubclass(t.cls, of: "Ljava/lang/Enum;") {
+            switch n {
+            case "ordinal": return I(t.fields["__ordinal"]?.i ?? 0)
+            case "name", "toString": return O(t.fields["__name"]?.o)
+            case "compareTo":
+                let other = a.first?.o?.fields["__ordinal"]?.i ?? 0
+                return I((t.fields["__ordinal"]?.i ?? 0) &- other)
+            case "getDeclaringClass":
+                var c = t.cls
+                if let s = c.superclass, s.name != "Ljava/lang/Enum;" { c = s }
+                return O(vm.newObject("Ljava/lang/Class;", native: ClassRef(name: c.name)))
+            case "equals": return B(t === a.first?.o)
+            case "hashCode": return I(Int32(truncatingIfNeeded: ObjectIdentifier(t).hashValue))
+            default: break
+            }
+        }
 
         // Throwable
         if vm.isSubclass(t.cls, of: "Ljava/lang/Throwable;") {
@@ -214,6 +275,22 @@ extension Framework {
             let th = ThreadBox()
             if let f = p.first, f == "Ljava/lang/Runnable;" { th.runnable = a[0].o }
             t.native = th
+        case "Ljava/lang/Enum;":
+            // Enum(String name, int ordinal) — called by every enum constant
+            t.fields["__name"] = a.count > 0 ? a[0] : .null
+            t.fields["__ordinal"] = a.count > 1 ? a[1] : .zero
+            return .void
+        case "Ljava/util/concurrent/atomic/AtomicInteger;", "Ljava/util/concurrent/atomic/AtomicBoolean;":
+            t.native = AtomicBox(p.isEmpty ? .zero : .int(a[0].i))
+        case "Ljava/util/concurrent/atomic/AtomicLong;":
+            t.native = AtomicBox(p.isEmpty ? .wide(0) : .wide(a[0].j))
+        case "Ljava/util/concurrent/atomic/AtomicReference;":
+            t.native = AtomicBox(p.isEmpty ? .null : a[0])
+        case "Ljava/util/concurrent/ThreadPoolExecutor;", "Ljava/util/concurrent/ScheduledThreadPoolExecutor;":
+            t.native = ExecutorBox()
+        case "Ljava/util/concurrent/locks/ReentrantLock;", "Ljava/util/concurrent/locks/ReentrantReadWriteLock;",
+             "Ljava/util/concurrent/Semaphore;", "Ljava/util/concurrent/CountDownLatch;":
+            t.native = LockBox()
         case "Ljava/lang/Integer;": t.native = Boxed(.int, a[0])
         case "Ljava/lang/Long;": t.native = Boxed(.long, a[0])
         case "Ljava/lang/Double;": t.native = Boxed(.double, a[0])
@@ -715,7 +792,7 @@ extension Framework {
             return B(true)
         case "removeCallbacks": cancel(vm, a.first?.o); return .void
         case "removeCallbacksAndMessages": cancel(vm, nil); return .void
-        case "getLooper": return O(vm.newObject("Landroid/os/Looper;"))
+        case "getLooper": return O(vm.mainLooper)
         default: return nil
         }
     }
@@ -841,6 +918,76 @@ extension Framework {
             }
             return ref.ret == "V" ? .void : O(t)
         case "setCancelable", "setIcon", "setView", "setOnDismissListener", "setOnCancelListener": return O(t)
+        default: return nil
+        }
+    }
+}
+
+extension Framework {
+
+    static func stubRet(_ vm: VM, _ ref: DexMethodRef) -> Ret {
+        if let v = stub(vm, ref) { return .val(v) }
+        return .void
+    }
+
+    // MARK: - Atomics
+
+    static func atomicMethod(_ vm: VM, _ t: JObject, _ ab: AtomicBox, _ ref: DexMethodRef, _ a: [Value]) throws -> Ret? {
+        let isLong = t.cls.name.hasSuffix("AtomicLong;")
+        func num(_ v: Value) -> Int64 { return isLong ? v.j : Int64(v.i) }
+        func wrap(_ x: Int64) -> Value { return isLong ? .wide(x) : .int(Int32(truncatingIfNeeded: x)) }
+        let cur = ab.value
+        switch ref.name {
+        case "get", "getPlain", "getAcquire", "getOpaque", "intValue", "longValue":
+            if ref.ret == "J" { return .val(.wide(num(cur))) }
+            if ref.ret == "I" || ref.ret == "Z" { return I(Int32(truncatingIfNeeded: num(cur))) }
+            return .val(cur)
+        case "set", "lazySet", "setPlain", "setRelease", "setOpaque":
+            ab.value = a[0]; return .void
+        case "getAndSet":
+            ab.value = a[0]; return .val(cur)
+        case "compareAndSet", "weakCompareAndSet", "weakCompareAndSetPlain", "weakCompareAndSetVolatile", "compareAndExchange":
+            let same = ref.params.first?.hasPrefix("L") == true ? vm.sameValue(cur, a[0]) : num(cur) == num(a[0])
+            if same { ab.value = a[1] }
+            return ref.name == "compareAndExchange" ? .val(cur) : B(same)
+        case "incrementAndGet", "decrementAndGet", "addAndGet":
+            let d: Int64 = ref.name == "incrementAndGet" ? 1 : (ref.name == "decrementAndGet" ? -1 : num(a[0]))
+            ab.value = wrap(num(cur) &+ d)
+            return .val(ab.value)
+        case "getAndIncrement", "getAndDecrement", "getAndAdd":
+            let d: Int64 = ref.name == "getAndIncrement" ? 1 : (ref.name == "getAndDecrement" ? -1 : num(a[0]))
+            ab.value = wrap(num(cur) &+ d)
+            return .val(cur)
+        case "doubleValue": return .val(.double(Double(num(cur))))
+        case "floatValue": return .val(.float(Float(num(cur))))
+        case "toString":
+            if let o = cur.o { return S(vm, try vm.stringOf(o)) }
+            if t.cls.name.hasSuffix("AtomicBoolean;") { return S(vm, cur.i != 0 ? "true" : "false") }
+            return S(vm, String(num(cur)))
+        default: return nil
+        }
+    }
+
+    static func updaterMethod(_ vm: VM, _ fu: FieldUpdaterBox, _ ref: DexMethodRef, _ a: [Value]) throws -> Ret? {
+        guard let obj = a.first?.o else { throw vm.npe(ref.name) }
+        let f = fu.field
+        let isRef = ref.params.count > 1 && ref.params[1].hasPrefix("L")
+        let cur = obj.fields[f] ?? (isRef ? .null : (ref.params.contains("J") ? .wide(0) : .zero))
+        switch ref.name {
+        case "get": return .val(cur)
+        case "set", "lazySet": obj.fields[f] = a[1]; return .void
+        case "getAndSet": obj.fields[f] = a[1]; return .val(cur)
+        case "compareAndSet", "weakCompareAndSet":
+            let same = isRef ? vm.sameValue(cur, a[1]) : cur.j == a[1].j
+            if same { obj.fields[f] = a[2] }
+            return B(same)
+        case "incrementAndGet", "decrementAndGet", "getAndIncrement", "getAndDecrement", "addAndGet", "getAndAdd":
+            let d: Int64 = ref.name.contains("ncrement") ? 1 : (ref.name.contains("ecrement") ? -1 : a[1].j)
+            let isWide: Bool
+            if case .wide = cur { isWide = true } else { isWide = false }
+            let nv: Value = isWide ? .wide(cur.j &+ d) : .int(Int32(truncatingIfNeeded: cur.j &+ d))
+            obj.fields[f] = nv
+            return .val(ref.name.hasPrefix("getAnd") ? cur : nv)
         default: return nil
         }
     }

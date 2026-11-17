@@ -268,7 +268,8 @@ extension Framework {
         case "Ljava/lang/Thread;":
             switch n {
             case "sleep": return .void
-            case "currentThread": return O(vm.newObject("Ljava/lang/Thread;", native: ThreadBox()))
+            case "currentThread": return O(vm.mainThread)
+            case "interrupted", "holdsLock": return B(false)
             default: return nil
             }
 
@@ -477,7 +478,39 @@ extension Framework {
             return nil
 
         case "Landroid/os/Looper;":
-            return O(vm.newObject("Landroid/os/Looper;"))
+            switch n {
+            case "getMainLooper", "myLooper": return O(vm.mainLooper)
+            case "prepare", "prepareMainLooper", "loop": return .void
+            default: return nil
+            }
+
+        case "Ljava/util/concurrent/Executors;":
+            if n.hasPrefix("new") || n == "unconfigurableExecutorService" {
+                return O(vm.newObject("Ljava/util/concurrent/ThreadPoolExecutor;", native: ExecutorBox()))
+            }
+            if n == "callable" { return O(arg(0).o) }
+            return nil
+
+        case "Ljava/util/concurrent/atomic/AtomicReferenceFieldUpdater;",
+             "Ljava/util/concurrent/atomic/AtomicIntegerFieldUpdater;",
+             "Ljava/util/concurrent/atomic/AtomicLongFieldUpdater;":
+            if n == "newUpdater" {
+                let field = try str(p.count - 1) ?? ""
+                return O(vm.newObject(ref.classDesc, native: FieldUpdaterBox(field: field)))
+            }
+            return nil
+
+        case "Ljava/lang/Enum;":
+            if n == "valueOf", let cr = arg(0).o?.native as? ClassRef {
+                let name = try str(1) ?? ""
+                let c = vm.classFor(cr.name)
+                try vm.ensureInit(c)
+                for v in c.statics.values {
+                    if let o = v.o, (o.fields["__name"]?.o?.native as? String) == name { return O(o) }
+                }
+                throw vm.throwable("Ljava/lang/IllegalArgumentException;", "No enum constant \(VMClass.javaName(cr.name)).\(name)")
+            }
+            return nil
 
         case "Landroidx/core/content/ContextCompat;", "Landroidx/core/content/res/ResourcesCompat;":
             switch n {

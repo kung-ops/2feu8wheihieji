@@ -192,6 +192,7 @@ extension VM {
             return r?.o?.string ?? "null"
         }
         if isSubclass(o.cls, of: "Ljava/lang/Throwable;") { return describeThrowable(o) }
+        if let name = o.fields["__name"]?.o?.native as? String, o.fields["__ordinal"] != nil { return name }
         return o.cls.javaName + "@" + String(UInt(bitPattern: ObjectIdentifier(o).hashValue) & 0xffffff, radix: 16)
     }
 

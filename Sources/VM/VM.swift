@@ -67,6 +67,11 @@ final class VM {
     var orphanViews: [JObject] = []
     var runnableGeneration: [ObjectIdentifier: Int] = [:]
 
+    /// The one main Looper and main Thread. Must be singletons, because apps
+    /// check `Looper.getMainLooper().getThread() == Thread.currentThread()`.
+    lazy var mainLooper: JObject = newObject("Landroid/os/Looper;", native: LooperBox())
+    lazy var mainThread: JObject = newObject("Ljava/lang/Thread;", native: ThreadBox())
+
     /// Library code we don't interpret; calls into it go to Framework stubs.
     static let frameworkPrefixes = [
         "Landroid/", "Ljava/", "Ljavax/", "Landroidx/", "Ldalvik/", "Lsun/",

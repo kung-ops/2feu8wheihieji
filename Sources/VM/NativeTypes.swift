@@ -118,3 +118,24 @@ final class ActivityBox {
     weak var host: ActivityHost?
     init(host: ActivityHost) { self.host = host }
 }
+
+/// java.util.concurrent.atomic.AtomicInteger / Long / Boolean / Reference
+final class AtomicBox {
+    var value: Value
+    init(_ v: Value) { value = v }
+}
+
+/// Atomic{Reference,Integer,Long}FieldUpdater: works on a named field.
+final class FieldUpdaterBox {
+    let field: String
+    init(field: String) { self.field = field }
+}
+
+/// ExecutorService / ThreadPoolExecutor / ScheduledExecutorService.
+/// Everything runs on the single VM thread, one task at a time.
+final class ExecutorBox {}
+
+/// ReentrantLock, ReentrantReadWriteLock, Semaphore… (single-threaded: no-ops)
+final class LockBox {}
+
+final class LooperBox {}
