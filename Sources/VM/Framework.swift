@@ -11,7 +11,7 @@ enum Ret {
 }
 
 /// Swift implementations of the Android & Java library methods that APK
-/// code calls. Anything not implemented returns a harmless default.
+/// code calls. Unsupported, non-noop APIs fail explicitly in strict execution mode.
 enum Framework {
 
     // MARK: - Class hierarchy guesses for framework classes
@@ -192,9 +192,15 @@ enum Framework {
         } else {
             if let r = try staticCall(vm, ref, a) { return r.value }
         }
+        let api = "\(VMClass.javaName(ref.classDesc)).\(ref.sig)"
         if !silent.contains(ref.name) {
-            vm.warnOnce("not implemented: \(VMClass.javaName(ref.classDesc)).\(ref.name)")
+            let message = "Unsupported Android API: " + api
+            vm.warnOnce(message)
+            if vm.strictRealApkMode { throw VMError.unsupported(message) }
+        } else {
+            vm.warnOnce("Compatibility no-op: " + api)
         }
+        vm.stubCallCount += 1
         return stub(vm, ref)
     }
 

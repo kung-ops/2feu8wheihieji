@@ -77,6 +77,21 @@ final class RunViewController: UIViewController, RunHost {
             apk.loadCode()
             DispatchQueue.main.async {
                 guard let self = self, !self.closed else { return }
+                for issue in apk.codeErrors { self.appendLog("✖ " + issue) }
+                guard !apk.dexFiles.isEmpty else {
+                    let message = apk.codeErrors.isEmpty
+                        ? "No valid DEX bytecode could be loaded."
+                        : apk.codeErrors.joined(separator: "\n")
+                    self.showError(title: "DEX loading failed", message: message)
+                    return
+                }
+                let desc = VMClass.descriptor(launcher)
+                guard apk.dexFiles.contains(where: { $0.hasClass(desc) }) else {
+                    self.showError(title: "Launcher missing",
+                                   message: "\(launcher) was not found in the loaded DEX classes.")
+                    return
+                }
+                self.appendLog("Loaded real DEX bytecode. Unsupported APIs will be reported.")
                 self.launch(launcher)
             }
         }
@@ -91,7 +106,11 @@ final class RunViewController: UIViewController, RunHost {
         }
         let desc = VMClass.descriptor(launcher)
         vm.post("launch") { [weak vm] in
-            try vm?.launchActivity(desc, intent: nil)
+            guard let vm = vm else { return }
+            defer {
+                vm.log("DEX methods executed: \(vm.interpretedMethodCount); compatibility no-ops: \(vm.stubCallCount)")
+            }
+            try vm.launchActivity(desc, intent: nil)
         }
     }
 

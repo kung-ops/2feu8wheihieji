@@ -11,6 +11,8 @@ final class ApkPackage {
     /// Filled by `loadCode()` just before running.
     private(set) var dexFiles: [DexFile] = []
     private(set) var codeLoaded = false
+    /// DEX files that could not be loaded are recorded rather than silently dropped.
+    private(set) var codeErrors: [String] = []
 
     private(set) var packageName = "?"
     private(set) var versionName = ""
@@ -48,14 +50,14 @@ final class ApkPackage {
         manifest = BinaryXML.parse(mbytes)
         resources = zip.read("resources.arsc").flatMap { ResourceTable(bytes: $0) }
 
-        var names: [String] = []
-        var n = 1
-        while true {
-            let name = n == 1 ? "classes.dex" : "classes\(n).dex"
-            guard zip.contains(name) else { break }
-            names.append(name)
-            n += 1
-        }
+        // Load root-level classesN.dex entries, even if a sequence number is skipped.
+        let names = zip.names.compactMap { name -> (Int, String)? in
+            if name == "classes.dex" { return (1, name) }
+            guard name.hasPrefix("classes"), name.hasSuffix(".dex") else { return nil }
+            let digits = name.dropFirst("classes".count).dropLast(".dex".count)
+            guard let number = Int(digits), number >= 2 else { return nil }
+            return (number, name)
+        }.sorted { $0.0 < $1.0 }.map { $0.1 }
         dexNames = names
         nativeLibs = zip.names.filter { $0.hasPrefix("lib/") && $0.hasSuffix(".so") }
         readManifest()
@@ -83,11 +85,18 @@ final class ApkPackage {
     func loadCode() {
         guard !codeLoaded else { return }
         var dexes: [DexFile] = []
+        var errors: [String] = []
         for name in dexNames {
             autoreleasepool {
-                if let bytes = zip.read(name), let dex = try? DexFile(bytes: bytes) { dexes.append(dex) }
+                guard let bytes = zip.read(name) else {
+                    errors.append("Could not decompress \(name)")
+                    return
+                }
+                do { dexes.append(try DexFile(bytes: bytes)) }
+                catch { errors.append("Could not parse \(name): \(error)") }
             }
         }
+        codeErrors = errors
         dexFiles = dexes
         codeLoaded = true
     }

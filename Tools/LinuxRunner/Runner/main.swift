@@ -50,15 +50,33 @@ let t0 = Date()
 let apk = try ApkPackage(url: URL(fileURLWithPath: args[1]), scanCode: true)
 print("📦 \(apk.label) \(apk.packageName) v\(apk.versionName)  dex=\(apk.dexNames.count) classes=\(apk.classCount) launcher=\(apk.launcherActivity ?? "-")")
 apk.loadCode()
+for error in apk.codeErrors { print("✖ " + error) }
+guard !apk.dexFiles.isEmpty else {
+    print("✖ No valid DEX files loaded. Nothing was executed.")
+    exit(3)
+}
+guard let launcher = apk.launcherActivity else {
+    print("✖ APK has no launcher activity.")
+    exit(3)
+}
+let desc = VMClass.descriptor(launcher)
+guard apk.dexFiles.contains(where: { $0.hasClass(desc) }) else {
+    print("✖ Launcher \(launcher) not found in loaded DEX classes.")
+    exit(3)
+}
 print(String(format: "⏱  loaded in %.2fs", Date().timeIntervalSince(t0)))
 
 let host = TextHost()
 let vm = VM(apk: apk)
 vm.host = host
 vm.log = { print("  log: " + $0) }
-let desc = VMClass.descriptor(apk.launcherActivity ?? "")
 vm.post("launch") { try vm.launchActivity(desc, intent: nil) }
 pump(3)
+if !host.errors.isEmpty || vm.interpretedMethodCount == 0 {
+    print("✖ Launch failed or no real DEX methods were executed.")
+    exit(4)
+}
+print("✓ DEX methods executed: \(vm.interpretedMethodCount); compatibility no-ops: \(vm.stubCallCount)")
 
 func screen() {
     guard let top = host.stack.last else { print("(no activity)"); return }
