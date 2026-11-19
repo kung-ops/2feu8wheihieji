@@ -107,9 +107,30 @@ final class DexFile {
     private var classIndex: [String: Int] = [:]
     private var parsed: [String: DexClass] = [:]
 
+    /// Only index DEX headers with valid bounds and section offsets.
+    private static func validHeader(_ d: Bytes) -> Bool {
+        guard d.count >= 0x70, d.u8(0) == 0x64, d.u8(1) == 0x65,
+              d.u8(2) == 0x78, d.u8(3) == 0x0a, d.u8(7) == 0,
+              d.u32(32) == d.count, d.u32(36) == 0x70,
+              d.u32(40) == 0x12345678 else { return false }
+        let sections: [(Int, Int, Int)] = [
+            (d.u32(56), d.u32(60), 4),
+            (d.u32(64), d.u32(68), 4),
+            (d.u32(72), d.u32(76), 12),
+            (d.u32(80), d.u32(84), 8),
+            (d.u32(88), d.u32(92), 8),
+            (d.u32(96), d.u32(100), 32)
+        ]
+        for (count, offset, itemSize) in sections {
+            if count == 0 { continue }
+            if offset > d.count || count > (d.count - offset) / itemSize { return false }
+        }
+        return true
+    }
+
     init(bytes: [UInt8]) throws {
         d = Bytes(bytes)
-        guard d.count > 0x70, d.u8(0) == 0x64, d.u8(1) == 0x65, d.u8(2) == 0x78 else { throw DexError.badMagic }
+        guard DexFile.validHeader(d) else { throw DexError.badMagic }
         stringCount = d.u32(56); stringIdsOff = d.u32(60)
         typeCount = d.u32(64); typeIdsOff = d.u32(68)
         protoCount = d.u32(72); protoIdsOff = d.u32(76)
@@ -125,7 +146,7 @@ final class DexFile {
     /// Header-only peek at a dex file's size (no parsing).
     static func headerCounts(_ bytes: [UInt8]) -> (classes: Int, methods: Int)? {
         let d = Bytes(bytes)
-        guard d.count > 0x70, d.u8(0) == 0x64, d.u8(1) == 0x65, d.u8(2) == 0x78 else { return nil }
+        guard validHeader(d) else { return nil }
         return (d.u32(96), d.u32(88))
     }
 

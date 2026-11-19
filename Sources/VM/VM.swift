@@ -64,6 +64,10 @@ final class VM {
 
     var steps = 0
     var stepLimit = 40_000_000
+    /// Distinguish interpreted APK methods from Android API compatibility fallbacks.
+    var interpretedMethodCount = 0
+    var stubCallCount = 0
+    var strictRealApkMode = true
     var depth = 0
     var stopped = false
     var log: (String) -> Void = { _ in }
@@ -518,6 +522,7 @@ final class VM {
         guard let code = m.code else {
             return try Framework.call(self, m.ref, this: m.isStatic ? nil : args.first?.o, args: args)
         }
+        interpretedMethodCount += 1
         depth += 1
         frames.append(m)
         defer {

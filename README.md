@@ -29,8 +29,13 @@ don't work:
 - OpenGL, WebView, RecyclerView/ListView, Fragments, Jetpack Compose UIs.
 - Google Play services, networking, camera and sensors.
 
-Big apps will show their info and a log of the parts that couldn't run. Small
-apps work best: a hello-world, a counter, a calculator or a school project
+Large apps can show their information, but cannot be assumed to run. Missing
+DEX files, invalid launcher classes, and unsupported non-noop Android APIs now
+report explicit errors. The Linux runner returns a failure if no app bytecode
+was interpreted. Compatibility no-ops are still present, but are logged and
+counted rather than hidden.
+
+Small apps work best: a hello-world, a counter, a calculator or a school project
 built with Android Studio's "Empty Views Activity" template.
 
 ## Code layout
