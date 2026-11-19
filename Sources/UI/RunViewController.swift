@@ -28,7 +28,10 @@ final class RunViewController: UIViewController, RunHost {
         view.backgroundColor = UIColor(white: 0.1, alpha: 1)
         title = apk.label
         navigationItem.leftBarButtonItem = UIBarButtonItem(title: "✕ Close", style: .plain, target: self, action: #selector(close))
-        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Log", style: .plain, target: self, action: #selector(toggleConsole))
+        navigationItem.rightBarButtonItems = [
+            UIBarButtonItem(title: "PC", style: .plain, target: self, action: #selector(openPCBridge)),
+            UIBarButtonItem(title: "Log", style: .plain, target: self, action: #selector(toggleConsole))
+        ]
 
         screen.backgroundColor = .white
         screen.clipsToBounds = true
@@ -56,6 +59,10 @@ final class RunViewController: UIViewController, RunHost {
         ])
 
         start()
+    }
+
+    @objc private func openPCBridge() {
+        navigationController?.pushViewController(PCBridgeViewController(), animated: true)
     }
 
     private func start() {

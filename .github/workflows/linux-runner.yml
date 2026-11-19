@@ -22,3 +22,6 @@ jobs:
           cat runner-help.txt
           test "$code" -eq 2
           grep -q "usage: runner" runner-help.txt
+
+      - name: Test PC Bridge server
+        run: node PCBridge/test-server.js

@@ -12,7 +12,11 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "APK Sandbox"
-        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(pick))
+        // Keep the existing + APK picker and add a separate optional PC media bridge.
+        navigationItem.rightBarButtonItems = [
+            UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(pick)),
+            UIBarButtonItem(title: "PC", style: .plain, target: self, action: #selector(openPCBridge))
+        ]
         navigationItem.leftBarButtonItem = UIBarButtonItem(title: "About", style: .plain, target: self, action: #selector(about))
         tableView.rowHeight = 64
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "c")
@@ -55,6 +59,10 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
         picker.delegate = self
         picker.allowsMultipleSelection = false
         present(picker, animated: true)
+    }
+
+    @objc private func openPCBridge() {
+        navigationController?.pushViewController(PCBridgeViewController(), animated: true)
     }
 
     @objc private func about() {
