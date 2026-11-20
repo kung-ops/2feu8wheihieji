@@ -49,6 +49,7 @@ public struct CGAffineTransform {
     public init(scaleX sx: CGFloat, y sy: CGFloat) {}
     public init(translationX tx: CGFloat, y ty: CGFloat) {}
     public init(rotationAngle angle: CGFloat) {}
+    public init(a: CGFloat, b: CGFloat, c: CGFloat, d: CGFloat, tx: CGFloat, ty: CGFloat) {}
 }
 public enum CGPathFillRule: Int { case winding, evenOdd }
 public enum CGLineCap: Int32 { case butt, round, square }
@@ -63,6 +64,7 @@ public final class CGContext {
     public func saveGState() {}
     public func restoreGState() {}
     public func clip(to rect: CGRect) {}
+    public func concatenate(_ transform: CGAffineTransform) {}
     public func setFillColor(_ color: CGColor) {}
     public func setStrokeColor(_ color: CGColor) {}
     public func setLineWidth(_ width: CGFloat) {}

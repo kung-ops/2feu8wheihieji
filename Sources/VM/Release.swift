@@ -56,20 +56,23 @@ extension VM {
         // Roots: static fields, screens, views, lists, interned strings.
         for c in classes.values { for v in c.statics.values { push(v) } }
         for h in activityStack {
-            push(h.activity); push(h.intent)
+            push(h.activity); push(h.intent); push(h.window)
             h.viewObjects.forEach { push($0) }
             view(h.rootBox)
         }
         orphanViews.forEach { push($0) }
         listViews.forEach { view($0) }
         internedStrings.values.forEach { push($0) }
+        push(application)
         push(mainLooper)
         push(mainThread)
 
         while let o = stack.popLast() {
             for v in o.fields.values { push(v) }
             switch o.native {
-            case nil, is String, is StringBuilderBox, is Boxed, is DecimalBox: break
+            case nil, is String, is StringBuilderBox, is Boxed, is DecimalBox, is BigIntegerBox,
+                 is CursorBox, is ContentValuesBox, is SQLiteDBBox, is SQLStatementBox, is ByteOutBox, is ByteInBox:
+                break
             case let a as JArray:
                 if case .refs(let items) = a.storage { items.forEach { push($0) } }
             case let l as ListBox: l.items.forEach { push($0) }
@@ -98,6 +101,10 @@ extension VM {
         orphanViews.removeAll()
         listViews.removeAll()
         dirtyCanvases.removeAll()
+        tickers.removeAll()
+        if let h = applicationHost { h.activity = nil; h.viewObjects.removeAll() }
+        application = nil
+        applicationHost = nil
         internedStrings.removeAll()
         runnableGeneration.removeAll()
         DispatchQueue.main.async {
@@ -112,6 +119,7 @@ extension VM {
             for h in screens {
                 h.activity = nil
                 h.intent = nil
+                h.window = nil
                 h.viewObjects.removeAll()
             }
         }

@@ -18,9 +18,17 @@ extension Framework {
             }
             let (o, box) = newAnimator(vm, ref.classDesc)
             var values = a
+            if n == "ofPropertyValuesHolder" {
+                // ObjectAnimator.ofPropertyValuesHolder(target, holders…) / ValueAnimator.ofPropertyValuesHolder(holders…)
+                if ref.classDesc == "Landroid/animation/ObjectAnimator;" { box.target = a.first?.o }
+                let holders = ((a.last?.o?.native as? JArray)?.items ?? []).compactMap { $0.o?.native as? PropertyValuesBox }
+                if let first = holders.first { box.property = first.property; box.endValue = first.endValue }
+                for h in holders where h.property == "alpha" { box.alpha = (h.endValue.o?.native as? Boxed)?.value.f }
+                return O(o)
+            }
             if ref.classDesc == "Landroid/animation/ObjectAnimator;", a.count >= 2 {
                 box.target = a[0].o
-                box.property = a[1].o?.string
+                box.property = a[1].o.flatMap { propertyName($0) }
                 values = Array(a.dropFirst(2))
             }
             if n == "ofObject" { values = Array(values.dropFirst()) } // skip TypeEvaluator
@@ -34,6 +42,20 @@ extension Framework {
                 if box.property == "alpha", et == "F" { box.alpha = last.f }
             }
             return O(o)
+        case "Landroid/animation/PropertyValuesHolder;":
+            guard n.hasPrefix("of") else { return nil }
+            let pv = PropertyValuesBox()
+            pv.property = a.first?.o.flatMap { propertyName($0) }
+            var values = Array(a.dropFirst())
+            if n == "ofObject" { values = Array(values.dropFirst()) }   // skip TypeEvaluator / converter
+            if let arr = values.last?.o?.native as? JArray, let last = arr.items.last {
+                switch arr.elementType {
+                case "F": pv.endValue = .obj(vm.box(last, type: "F"))
+                case "I": pv.endValue = .obj(vm.box(last, type: "I"))
+                default: pv.endValue = last
+                }
+            }
+            return O(vm.newObject("Landroid/animation/PropertyValuesHolder;", native: pv))
         case "Landroid/animation/AnimatorInflater;":
             if n == "loadAnimator" { return O(newAnimator(vm, "Landroid/animation/AnimatorSet;").0) }
             if n == "loadStateListAnimator" { return O(nil) }
@@ -45,6 +67,16 @@ extension Framework {
         default:
             return nil
         }
+    }
+
+    /// "alpha" for the string "alpha" or for View.ALPHA (a Property constant).
+    static func propertyName(_ o: JObject) -> String? {
+        if let s = o.native as? String { return s }
+        guard let raw = o.fields["__name"]?.o?.native as? String else { return nil }
+        // ALPHA → alpha, TRANSLATION_X → translationX, SCALE_Y → scaleY
+        let parts = raw.lowercased().split(separator: "_")
+        guard let head = parts.first else { return nil }
+        return String(head) + parts.dropFirst().map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined()
     }
 
     static func animationConstruct(_ t: JObject, _ ref: DexMethodRef) -> Ret? {

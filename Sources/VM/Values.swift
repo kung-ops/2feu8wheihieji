@@ -89,6 +89,24 @@ final class JArray {
         self.items = items
     }
 
+    /// A byte[] holding `bytes`.
+    convenience init(bytes: [UInt8]) {
+        self.init(type: "[B", count: 0)
+        storage = .bytes(bytes.map { Int8(bitPattern: $0) })
+        HeapBudget.shared.add(bytes.count)
+    }
+
+    /// Writes `bytes` into a byte[] starting at `offset` (clipped to the array).
+    func setBytes(_ bytes: ArraySlice<UInt8>, at offset: Int) {
+        guard case .bytes(var a) = storage else {
+            for (k, b) in bytes.enumerated() where offset + k < count { self[offset + k] = .int(Int32(Int8(bitPattern: b))) }
+            return
+        }
+        storage = .refs([])
+        for (k, b) in bytes.enumerated() where offset + k < a.count { a[offset + k] = Int8(bitPattern: b) }
+        storage = .bytes(a)
+    }
+
     deinit { HeapBudget.shared.remove(currentBytes) }
 
     /// Bytes of storage a `type` array of `count` elements needs.

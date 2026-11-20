@@ -41,6 +41,38 @@ final class ViewBox: NSObject {
     var touchListener: JObject?
     var pxWidth: Int32 = 0
     var pxHeight: Int32 = 0
+    /// An app-defined Drawable shown by this ImageView (drawn through `canvasView`).
+    var drawable: JObject?
+    /// A drawing surface added on top of a non-canvas view (ImageView + Drawable).
+    var overlayCanvas: CanvasView?
+    /// Where this view's drawing shows: the view itself or its overlay.
+    var canvasView: CanvasView? { return (view as? CanvasView) ?? overlayCanvas }
+
+    /// Lets an ImageView show what an app Drawable draws: adds a canvas on top.
+    func addOverlayCanvas() {
+        guard canvasView == nil else { return }
+        let cv = CanvasView()
+        cv.box = self
+        cv.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(cv)
+        #if !APKSANDBOX_RUNNER
+        NSLayoutConstraint.activate([
+            cv.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            cv.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            cv.topAnchor.constraint(equalTo: view.topAnchor),
+            cv.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+        let h = view.heightAnchor.constraint(greaterThanOrEqualToConstant: 360)
+        h.priority = .defaultLow
+        h.isActive = true
+        #endif
+        view.isUserInteractionEnabled = true
+        overlayCanvas = cv
+        isCanvas = true
+    }
+
+    /// Android text color (ARGB) last set from the layout or setTextColor.
+    var textARGB: UInt32 = 0xde000000
     var touchDownTime: Int64 = 0
     /// Main thread → VM: a touch (action, x, y in points) / the view's size (points).
     var touchHandler: ((ViewBox, Int32, CGFloat, CGFloat) -> Void)?

@@ -101,6 +101,7 @@ final class HomeViewController: UIViewController, UICollectionViewDataSource, UI
         ])
 
         NotificationCenter.default.addObserver(self, selector: #selector(reload), name: TaskManager.changed, object: nil)
+        installBuiltInAppsIfNeeded()
         NotificationCenter.default.addObserver(self, selector: #selector(updateClock), name: UIApplication.didBecomeActiveNotification, object: nil)
         updateClock()
         clockTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.updateClock() }
@@ -156,6 +157,15 @@ final class HomeViewController: UIViewController, UICollectionViewDataSource, UI
         let d = DateFormatter()
         d.dateFormat = DateFormatter.dateFormat(fromTemplate: "EEEEMMMMd", options: 0, locale: Locale.current) ?? "EEEE, MMMM d"
         dateLabel.text = d.string(from: Date())
+    }
+
+    /// First launch: LineageOS's Calculator and Easter Egg come preinstalled.
+    private func installBuiltInAppsIfNeeded() {
+        guard !PackageManager.shared.pendingBuiltInApps().isEmpty else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            PackageManager.shared.installBuiltInApps()
+            DispatchQueue.main.async { self?.reload() }
+        }
     }
 
     @objc func reload() {

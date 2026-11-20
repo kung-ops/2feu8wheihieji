@@ -132,6 +132,8 @@ enum CanvasRenderer {
                 ctx.rotate(by: deg * .pi / 180)
             case .clip(let r):
                 ctx.clip(to: r.standardized)
+            case .concat(let a, let b, let c, let d, let tx, let ty):
+                ctx.concatenate(CGAffineTransform(a: a, b: b, c: c, d: d, tx: tx, ty: ty))
             }
         }
         while saves > 0 { ctx.restoreGState(); saves -= 1 }

@@ -112,6 +112,8 @@ extension Framework {
         switch name {
         case "activity": return O(vm.newObject("Landroid/app/ActivityManager;", native: ActivityManagerBox()))
         case "layout_inflater": return O(vm.newObject("Landroid/view/LayoutInflater;", native: InflaterBox()))
+        case "accessibility", "Landroid/view/accessibility/AccessibilityManager;":
+            return O(vm.newObject("Landroid/view/accessibility/AccessibilityManager;", native: AccessibilityManagerBox()))
         default:
             vm.warnOnce("system service '\(name)' is not available on the virtual device")
             return O(nil)

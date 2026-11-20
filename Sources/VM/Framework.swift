@@ -100,6 +100,8 @@ enum Framework {
             }
         case is ActivityBox:
             return s.contains("context") || s.contains("activity") || s.contains("lifecycleowner")
+        case is BigIntegerBox, is DecimalBox:
+            return s.contains("number") || s.contains("comparable") || s.contains("serializable") || o.cls.name == type
         case is JArray:
             return type.hasPrefix("[")
         default:
@@ -170,6 +172,9 @@ enum Framework {
 
     /// Methods that are fine to ignore silently (lifecycle callbacks etc.).
     static let silent: Set<String> = [
+        "onAnimationStart", "onAnimationEnd", "onAnimationCancel", "onAnimationRepeat", "onAnimationPause",
+        "onAnimationResume", "onAnimationUpdate", "onTransitionStart", "onTransitionEnd", "onTransitionCancel",
+        "onTransitionPause", "onTransitionResume",
         "<init>", "onCreate", "onStart", "onResume", "onPause", "onStop", "onDestroy", "onRestart",
         "onPostCreate", "onPostResume", "onSaveInstanceState", "onRestoreInstanceState",
         "onWindowFocusChanged", "onAttachedToWindow", "onContentChanged", "onConfigurationChanged",
@@ -344,6 +349,7 @@ enum Framework {
             let p = x.asDouble, q = y.asDouble
             return p < q ? -1 : (p > q ? 1 : 0)
         }
+        if let x = a.o?.native as? BigIntegerBox, let y = b.o?.native as? BigIntegerBox { return Int32(x.value.compare(y.value)) }
         if case .obj(let o) = a, let ao = o, ao.cls.isApp {
             return try vm.call(ao, "compareTo", params: ["Ljava/lang/Object;"], ret: "I", args: [b])?.i ?? 0
         }

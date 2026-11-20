@@ -207,9 +207,15 @@ final class ApkPackage {
         return ApkPackage.decodeImage(data, maxSide: maxSide)
     }
 
+    /// A file of the app, or of Android itself ("@android/res/…").
+    func readFile(_ path: String) -> [UInt8]? {
+        if path.hasPrefix("@android/") { return FrameworkResources.shared?.read(path) }
+        return zip.read(path)
+    }
+
     func image(resource id: Int) -> UIImage? {
         guard let p = resources?.filePath(id, preferBitmap: true), !p.hasSuffix(".xml"),
-              let bytes = zip.read(p) else { return nil }
+              let bytes = readFile(p) else { return nil }
         return ApkPackage.decodeImage(Data(bytes), maxSide: VirtualDevice.maxBitmapSide)
     }
 
@@ -233,8 +239,26 @@ final class ApkPackage {
         #endif
     }
 
+    /// For a view class the app ships (com.example.MyTextView, or an AndroidX
+    /// widget bundled in the APK), the first Android class above it, such as
+    /// "Landroid/widget/TextView;". nil for classes the APK doesn't contain.
+    func frameworkAncestor(ofView element: String) -> String? {
+        guard element.contains(".") else { return nil }
+        var desc = "L" + element.replacingOccurrences(of: ".", with: "/") + ";"
+        var steps = 0
+        while steps < 30 {
+            guard let dx = dexFiles.first(where: { $0.hasClass(desc) }) else {
+                return steps == 0 ? nil : desc
+            }
+            guard let s = dx.superclassOf(desc) else { return nil }
+            desc = s
+            steps += 1
+        }
+        return nil
+    }
+
     func layout(_ id: Int) -> AXMLNode? {
-        guard let p = resources?.filePath(id), p.hasSuffix(".xml"), let bytes = zip.read(p) else { return nil }
+        guard let p = resources?.filePath(id), p.hasSuffix(".xml"), let bytes = readFile(p) else { return nil }
         return BinaryXML.parse(bytes)?.children.first
     }
 

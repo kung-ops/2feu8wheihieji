@@ -11,6 +11,8 @@ jobs:
       - uses: swift-actions/setup-swift@v2
         with:
           swift-version: "5.10"
+      - name: SQLite headers (iOS has SQLite built in)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsqlite3-dev
       - name: Build the actual Dalvik interpreter
         run: bash Tools/LinuxRunner/build.sh
       - name: Runner CLI exits nonzero without an APK
@@ -89,5 +91,46 @@ jobs:
           grep -q 'file=hello file' run.txt
           $R uninstall com.kungops.counter
           test -z "$($R list)"
+      - name: Android 9 system resources (from LineageOS 16.0)
+        shell: bash
+        run: |
+          R=Tools/LinuxRunner/build/runner
+          test "$($R android-res 0x0104000a)" = "OK"
+          test "$($R android-res 0x01040000)" = "Cancel"
+          $R android-res 0x01090003 | grep -q 'simple_list_item_1.xml'
+      - name: LineageOS Calculator (exact math, styles, SQLite history)
+        shell: bash
+        run: |
+          R=Tools/LinuxRunner/build/runner
+          C=Sources/Android/Preinstalled/LineageCalculator.apk
+          $R $C wait:500 tap:digit_7 tap:op_add tap:digit_5 wait:300 expect:result=12 tap:eq wait:600 | tee calc.txt
+          $R $C wait:500 tap:digit_2 tap:op_pow tap:digit_1 tap:digit_0 tap:digit_0 wait:300 \
+             expect:result=1.267650600228229401496703205376E30 tap:clr wait:500 \
+             tap:digit_1 tap:op_div tap:digit_3 wait:300 tap:toggle_mode tap:fun_sin tap:digit_3 tap:digit_0 tap:rparen wait:300 \
+             expect:result=0.16666666666666666666666666666666666 | tee calc2.txt
+          if grep -q 'FATAL\|Unsupported\|Interpreter stopped' calc.txt calc2.txt; then echo "Calculator stopped"; exit 1; fi
+          python3 -c "import sqlite3,os; c=sqlite3.connect(os.path.expanduser('~/.local/share/VirtualAndroid/data/com.android.calculator2/databases/Expressions.db')); assert c.execute('select count(*) from expressions').fetchone()[0] >= 1"
+      - name: LineageOS Easter Egg (Drawable, Matrix, springs, TimeAnimator)
+        shell: bash
+        run: |
+          R=Tools/LinuxRunner/build/runner
+          $R Sources/Android/Preinstalled/LineageEasterEgg.apk wait:1500 touch:360,640 wait:300 svg:octo.svg | tee egg.txt
+          grep -q 'canvas 720x1280 px' egg.txt
+          if grep -q 'FATAL\|Unsupported\|Interpreter stopped' egg.txt; then echo "Easter Egg stopped"; exit 1; fi
+          frames=$(grep -o 'frames drawn=[0-9]*' egg.txt | cut -d= -f2)
+          test "$frames" -gt 20
+          test "$(grep -c '<ellipse' octo.svg)" -gt 50
+      - name: Built-in apps install on first launch and stay removed
+        shell: bash
+        run: |
+          R=Tools/LinuxRunner/build/runner
+          $R install-builtin | grep -q 'Calculator, Android Easter Egg'
+          $R run com.android.calculator2 wait:400 tap:digit_6 tap:op_mul tap:digit_7 wait:300 expect:result=42
+          $R uninstall com.android.egg
+          $R install-builtin | grep -q 'installed: none'
+          $R install-builtin --again | grep -q 'Android Easter Egg'
+          $R uninstall com.android.egg
+          $R uninstall com.android.calculator2
+          rm -f ~/.local/share/VirtualAndroid/builtin-installed.json
       - name: Type-check the iOS screens against the UIKit stand-in
         run: bash Tools/UIKitCheck/typecheck.sh

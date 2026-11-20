@@ -63,6 +63,29 @@ extension Framework {
             switch n {
             case "getName", "getCanonicalName", "getTypeName": r = S(vm, VMClass.javaName(c.name))
             case "getSimpleName": r = S(vm, AndroidLayoutInflater.simpleName(VMClass.javaName(c.name)))
+            case "newInstance":
+                r = O(try newInstance(vm, c.name))
+            case "getDeclaredConstructor", "getConstructor":
+                // Only the no-argument constructor is supported.
+                r = O(vm.newObject("Ljava/lang/reflect/Constructor;", native: ClassRef(name: c.name)))
+            case "isInstance":
+                r = B(a[0].o.map { vm.instanceOf($0, c.name) } ?? false)
+            case "cast":
+                r = .val(a[0])
+            case "isAssignableFrom":
+                if let other = a[0].o?.native as? ClassRef { r = B(vm.isSubclass(vm.classFor(other.name), of: c.name)) }
+            case "getSuperclass":
+                let sup = vm.classFor(c.name).superclass
+                r = O(sup.map { vm.newObject("Ljava/lang/Class;", native: ClassRef(name: $0.name)) })
+            case "isInterface": r = B(vm.classFor(c.name).dex?.isInterface ?? false)
+            case "isArray": r = B(c.name.hasPrefix("["))
+            case "isEnum": r = B(vm.isSubclass(vm.classFor(c.name), of: "Ljava/lang/Enum;"))
+            case "getClassLoader": r = O(vm.newObject("Ljava/lang/ClassLoader;"))
+            case "desiredAssertionStatus": r = B(false)
+            case "hashCode": r = I(Int32(truncatingIfNeeded: c.name.hashValue))
+            case "equals": r = B((a[0].o?.native as? ClassRef)?.name == c.name)
+            case "toString": r = S(vm, "class " + VMClass.javaName(c.name))
+            case "setAccessible": r = .void
             default: break
             }
         case let th as ThreadBox:
@@ -123,10 +146,25 @@ extension Framework {
                     onMain { screen?.titleChanged(host) }
                 }
                 r = .void
-            case "hide", "show", "setDisplayHomeAsUpEnabled", "setHomeButtonEnabled", "setDisplayShowTitleEnabled": r = .void
+            case "hide", "show", "setDisplayHomeAsUpEnabled", "setHomeButtonEnabled", "setDisplayShowTitleEnabled",
+                 "setDisplayOptions", "setDisplayShowHomeEnabled", "setDisplayUseLogoEnabled", "setDisplayShowCustomEnabled",
+                 "addOnMenuVisibilityListener", "removeOnMenuVisibilityListener", "setElevation", "setBackgroundDrawable",
+                 "setIcon", "setLogo", "setHomeAsUpIndicator", "setHomeActionContentDescription", "setCustomView",
+                 "setShowHideAnimationEnabled", "setHideOnContentScrollEnabled", "setNavigationMode":
+                r = .void
+            case "isShowing": r = B(true)
+            case "getHeight": r = I(0)
+            case "getDisplayOptions": r = I(0)
+            case "getThemedContext": r = O(vm.currentActivity?.activity)
             default: break
             }
         case let ab as AnimatorBox: r = try animatorMethod(vm, t, ab, ref, a)
+        case let bb as BigIntegerBox: r = try bigIntegerMethod(vm, t, bb, ref, a)
+        case let hb as SQLiteHelperBox: r = try helperMethod(vm, t, hb, ref, a)
+        case let db as SQLiteDBBox: r = try databaseMethod(vm, t, db, ref, a)
+        case let cb as CursorBox: r = try cursorMethod(vm, cb, ref, a)
+        case let cv as ContentValuesBox: r = try contentValuesMethod(vm, t, cv, ref, a)
+        case let st as SQLStatementBox: r = try statementMethod(vm, st, ref, a)
         case let db as DecimalBox: r = try decimalMethod(vm, t, db, ref, a)
         case let nf as NumberFormatBox: r = try numberFormatMethod(vm, t, nf, ref, a)
         case let eb as EditableBox: r = try editableMethod(vm, t, eb, ref, a)
@@ -164,6 +202,15 @@ extension Framework {
         case let ad as AdapterBox: r = try adapterMethod(vm, t, ad, ref, a)
         case is ActivityManagerBox: r = activityManagerMethod(vm, ref, a)
         case let fs as FileStreamBox: r = try fileStreamMethod(vm, t, fs, ref, a)
+        case is ByteOutBox, is ByteInBox, is StreamWrapBox: r = try ioMethod(vm, t, ref, a)
+        case let pv as PropertyValuesBox:
+            switch n {
+            case "getPropertyName": r = S(vm, pv.property ?? "")
+            case "setPropertyName": pv.property = a[0].o?.string; r = .void
+            case "setFloatValues", "setIntValues", "setObjectValues", "setEvaluator", "setConverter", "setProperty", "setKeyframes":
+                r = .void
+            default: break
+            }
         case let fu as FieldUpdaterBox: r = try updaterMethod(vm, fu, ref, a)
         case is ExecutorBox:
             switch n {
@@ -208,6 +255,8 @@ extension Framework {
         default:
             break
         }
+        if r == nil, let c = try compatInstance(vm, t, ref, a) { r = c }
+        if r == nil, let m = try motionInstance(vm, t, ref, a) { r = m }
         if r == nil, t.native == nil, let path = filePath(t) { r = try fileMethod(vm, t, path, ref, a) }
         if r == nil, t.native == nil {
             switch t.cls.name {
@@ -288,6 +337,10 @@ extension Framework {
         if let r = try streamConstruct(vm, t, ref, a) { return r }
         if let r = adapterConstruct(vm, t, ref, a) { return r }
         if let r = graphicsConstruct(vm, t, ref, a) { return r }
+        if let r = compatConstruct(vm, t, ref, a) { return r }
+        if let r = try sqliteConstruct(vm, t, ref, a) { return r }
+        if let r = try ioConstruct(vm, t, ref, a) { return r }
+        if let r = try motionConstruct(vm, t, ref, a) { return r }
         switch c {
         case "Ljava/lang/Object;":
             return .void

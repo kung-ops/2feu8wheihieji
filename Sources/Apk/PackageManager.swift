@@ -208,6 +208,60 @@ final class PackageManager {
         apps = list.sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
     }
 
+    // MARK: - Built-in apps
+
+    /// LineageOS's own Calculator and Easter Egg, shipped inside APK Sandbox
+    /// (Apache 2.0, see PreinstalledApps-NOTICE.txt). Installed on the first
+    /// launch like a new phone's apps; an app the user removes stays removed
+    /// until they ask for the built-in apps again in Device settings.
+    static let builtInApps: [(file: String, package: String)] = [
+        ("LineageCalculator", "com.android.calculator2"),
+        ("LineageEasterEgg", "com.android.egg")
+    ]
+    /// Packages already offered once (kept with the virtual phone's files).
+    private var builtInDoneURL: URL { return PackageManager.root.appendingPathComponent("builtin-installed.json") }
+    private var builtInDone: Set<String> {
+        get {
+            guard let d = try? Data(contentsOf: builtInDoneURL),
+                  let list = try? JSONDecoder().decode([String].self, from: d) else { return [] }
+            return Set(list)
+        }
+        set {
+            if let d = try? JSONEncoder().encode(newValue.sorted()) { try? d.write(to: builtInDoneURL, options: .atomic) }
+        }
+    }
+
+    /// The bundled APKs (the Linux runner sets `builtInFolder`).
+    static var builtInFolder: URL?
+    static func builtInURL(_ file: String) -> URL? {
+        if let dir = builtInFolder { return dir.appendingPathComponent(file + ".apk") }
+        return Bundle.main.url(forResource: file, withExtension: "apk")
+    }
+
+    /// Built-in apps not installed yet and not removed by the user.
+    func pendingBuiltInApps(includingRemoved: Bool = false) -> [(file: String, package: String)] {
+        let done = builtInDone
+        return PackageManager.builtInApps.filter { item in
+            !fm.fileExists(atPath: apkURL(item.package).path) && (includingRemoved || !done.contains(item.package))
+                && PackageManager.builtInURL(item.file) != nil
+        }
+    }
+
+    /// Installs the built-in apps that are missing. Slow: call off the main
+    /// thread. Returns the names installed.
+    @discardableResult
+    func installBuiltInApps(includingRemoved: Bool = false) -> [String] {
+        var installed: [String] = []
+        var done = builtInDone
+        for item in pendingBuiltInApps(includingRemoved: includingRemoved) {
+            guard let url = PackageManager.builtInURL(item.file) else { continue }
+            if let app = try? install(from: url) { installed.append(app.label) }
+            done.insert(item.package)
+        }
+        builtInDone = done
+        return installed
+    }
+
     // MARK: - Install
 
     enum InstallError: LocalizedError {

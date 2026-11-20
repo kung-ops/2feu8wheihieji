@@ -179,6 +179,12 @@ final class EditableBox {
 /// ValueAnimator / ObjectAnimator / AnimatorSet / ViewPropertyAnimator.
 /// The sandbox doesn't animate: start() jumps to the end and calls the
 /// app's listeners (update → end), which is what apps wait for.
+/// PropertyValuesHolder: one animated property and where it ends.
+final class PropertyValuesBox {
+    var property: String?
+    var endValue: Value = .null
+}
+
 final class AnimatorBox {
     var endValue: Value = .null
     var target: JObject?
