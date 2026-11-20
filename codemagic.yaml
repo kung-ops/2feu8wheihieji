@@ -8,13 +8,16 @@ workflows:
     max_build_duration: 45
     environment:
       xcode: 16.4
-    # Build automatically whenever main changes on GitHub.
+    # Build automatically whenever main changes on GitHub, and for every pull
+    # request into main (so a PR shows whether the iOS app still builds).
     triggering:
       events:
         - push
+        - pull_request
       branch_patterns:
         - pattern: main
           include: true
+          source: false
       cancel_previous_builds: true
     scripts:
       - name: Show Xcode version
@@ -47,5 +50,15 @@ workflows:
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/ApkSandbox.app Payload/
           zip -qr ApkSandbox.ipa Payload
+          # Same file for TrollStore (iOS 14–15.x, e.g. an iPhone 7 on iOS 15).
+          cp ApkSandbox.ipa ApkSandbox.tipa
+      - name: Check the app targets iOS 12 on arm64
+        script: |
+          BIN=Payload/ApkSandbox.app/ApkSandbox
+          lipo -info "$BIN"
+          otool -l "$BIN" | grep -A4 LC_BUILD_VERSION || true
+          echo "MinimumOSVersion: $(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' Payload/ApkSandbox.app/Info.plist)"
+          ls -la ApkSandbox.ipa ApkSandbox.tipa
     artifacts:
       - ApkSandbox.ipa
+      - ApkSandbox.tipa

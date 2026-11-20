@@ -32,13 +32,11 @@
     <array>
         <string>UIInterfaceOrientationPortrait</string>
     </array>
-    <key>UISupportedInterfaceOrientations~ipad</key>
-    <array>
-        <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationPortraitUpsideDown</string>
-        <string>UIInterfaceOrientationLandscapeLeft</string>
-        <string>UIInterfaceOrientationLandscapeRight</string>
-    </array>
+    <!-- Light look on iOS 13–15 too (dark mode is iOS 13+; iOS 12 ignores this). -->
+    <key>UIUserInterfaceStyle</key>
+    <string>Light</string>
+    <key>UIViewControllerBasedStatusBarAppearance</key>
+    <true/>
 
     <!-- APKs dropped into the app's folder show up in the Files app / Finder -->
     <key>NSCameraUsageDescription</key>

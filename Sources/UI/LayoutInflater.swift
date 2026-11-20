@@ -35,6 +35,7 @@ final class AndroidLayoutInflater {
         if s.contains("imageview") { return .image }
         if s.contains("seekbar") || s == "slider" || s == "ratingbar" { return .slider }
         if s.contains("progressbar") || s.contains("progressindicator") { return .progress }
+        if s == "listview" || s == "gridview" { return .container }
         if s.contains("layout") || s.contains("scrollview") || s.contains("cardview") || s == "radiogroup"
             || s == "tablerow" || s == "viewgroup" || s.contains("viewflipper") || s == "merge" || s == "include" {
             return .container
@@ -59,7 +60,7 @@ final class AndroidLayoutInflater {
 
     static func isUnsupportedWidget(_ element: String) -> Bool {
         let s = simpleName(element).lowercased()
-        return ["webview", "recyclerview", "listview", "gridview", "surfaceview", "textureview",
+        return ["webview", "recyclerview", "surfaceview", "textureview",
                 "videoview", "mapview", "fragmentcontainerview", "fragment", "viewpager", "viewpager2",
                 "glsurfaceview", "spinner", "calendarview", "datepicker", "timepicker"].contains(s)
     }
@@ -137,7 +138,15 @@ final class AndroidLayoutInflater {
             st.spacing = 8
             st.alignment = horizontal ? .center : .fill
             st.distribution = .fill
-            return ViewBox(kind: k, elementName: element, view: st, control: st)
+            let box = ViewBox(kind: k, elementName: element, view: st, control: st)
+            if lower == "listview" || lower == "gridview" {
+                // Rows come from the adapter; drawn as a plain list.
+                box.isList = true
+                st.axis = .vertical
+                st.alignment = .fill
+                st.spacing = 0
+            }
+            return box
         case .other:
             let v = UIView()
             return ViewBox(kind: k, elementName: element, view: v, control: v)

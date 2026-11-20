@@ -75,23 +75,34 @@ final class ZipArchive {
 
     func size(of name: String) -> Int { return entries[name]?.size ?? 0 }
 
+    /// Just the first `maxBytes` bytes of an entry (cheap: only that much is
+    /// decompressed). Used to peek at dex headers.
+    func readPrefix(_ name: String, maxBytes: Int) -> [UInt8]? {
+        guard let e = entries[name], maxBytes > 0 else { return nil }
+        return read(e, limit: min(maxBytes, e.size))
+    }
+
     func read(_ name: String) -> [UInt8]? {
         guard let e = entries[name] else { return nil }
+        return read(e, limit: e.size)
+    }
+
+    private func read(_ e: Entry, limit: Int) -> [UInt8]? {
         let lo = e.localOffset
         guard u32(lo) == 0x04034b50 else { return nil }
         let start = lo + 30 + u16(lo + 26) + u16(lo + 28)
         guard start >= 0, start + e.compressedSize <= count else { return nil }
 
         if e.method == 0 {
-            return bytes(start, e.compressedSize)
+            return bytes(start, min(limit, e.compressedSize))
         }
         guard e.method == 8 else { return nil }
-        if e.size == 0 { return [] }
+        if e.size == 0 || limit == 0 { return [] }
         guard e.size < 256 * 1024 * 1024 else { return nil }
 
-        var out = [UInt8](repeating: 0, count: e.size)
+        var out = [UInt8](repeating: 0, count: limit)
         let csize = e.compressedSize
-        let usize = e.size
+        let usize = limit
         let written: Int = data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Int in
             guard let base = raw.baseAddress else { return 0 }
             let src = base.assumingMemoryBound(to: UInt8.self) + start
@@ -104,5 +115,12 @@ final class ZipArchive {
         if written <= 0 { return nil }
         if written < usize { return Array(out[0..<written]) }
         return out
+    }
+
+    /// Decompresses an entry into a file. Returns false if it couldn't.
+    @discardableResult
+    func extract(_ name: String, to url: URL) -> Bool {
+        guard let bytes = read(name), bytes.count == size(of: name) else { return false }
+        return (try? Data(bytes).write(to: url, options: .atomic)) != nil
     }
 }

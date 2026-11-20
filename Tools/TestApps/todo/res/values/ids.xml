@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item type="id" name="input"/>
+    <item type="id" name="add"/>
+    <item type="id" name="list"/>
+    <item type="id" name="empty"/>
+    <item type="id" name="count"/>
+    <item type="id" name="row_text"/>
+</resources>

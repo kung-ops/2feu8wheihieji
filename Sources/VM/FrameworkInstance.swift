@@ -140,6 +140,10 @@ extension Framework {
             default: break
             }
         case let ab as AtomicBox: r = try atomicMethod(vm, t, ab, ref, a)
+        case is RuntimeBox: r = runtimeMethod(vm, ref)
+        case let ad as AdapterBox: r = try adapterMethod(vm, t, ad, ref, a)
+        case is ActivityManagerBox: r = activityManagerMethod(vm, ref, a)
+        case let fs as FileStreamBox: r = try fileStreamMethod(vm, t, fs, ref, a)
         case let fu as FieldUpdaterBox: r = try updaterMethod(vm, fu, ref, a)
         case is ExecutorBox:
             switch n {
@@ -183,6 +187,12 @@ extension Framework {
             if n == "clone" { r = O(vm.newObject(arr.type, native: JArray(type: arr.type, items: arr.items))) }
         default:
             break
+        }
+        if r == nil, t.native == nil, let path = filePath(t) { r = try fileMethod(vm, t, path, ref, a) }
+        if r == nil, t.native == nil, n == "notifyDataSetChanged" || n == "notifyDataSetInvalidated" {
+            // The app's own BaseAdapter subclass.
+            try vm.notifyAdapterChanged(t)
+            r = .void
         }
         if r == nil, t.native == nil { r = plainObjectMethod(vm, t, ref, a) }
         if let r = r { return r }
@@ -247,6 +257,9 @@ extension Framework {
         let c = ref.classDesc
         let p = ref.params
         if t.native != nil { return .void }
+        if let r = try fileConstruct(vm, t, ref, a) { return r }
+        if let r = try streamConstruct(vm, t, ref, a) { return r }
+        if let r = adapterConstruct(vm, t, ref, a) { return r }
         switch c {
         case "Ljava/lang/Object;":
             return .void
@@ -257,16 +270,20 @@ extension Framework {
         case "Ljava/lang/String;":
             if p.isEmpty { t.native = "" }
             else if p[0] == "[C" {
-                let items = (a[0].o?.native as? JArray)?.items ?? []
+                let units = (a[0].o?.native as? JArray)?.utf16 ?? []
                 if p.count == 3 {
                     let off = max(0, Int(a[1].i)), cnt = max(0, Int(a[2].i))
-                    t.native = vm.charsToString(Array(items.dropFirst(off).prefix(cnt)))
+                    t.native = String(decoding: units.dropFirst(off).prefix(cnt), as: UTF16.self)
                 } else {
-                    t.native = vm.charsToString(items)
+                    t.native = String(decoding: units, as: UTF16.self)
                 }
             } else if p[0] == "[B" {
-                let items = (a[0].o?.native as? JArray)?.items ?? []
-                t.native = String(decoding: items.map { UInt8(truncatingIfNeeded: $0.i) }, as: UTF8.self)
+                var bytes = (a[0].o?.native as? JArray)?.byteValues ?? []
+                if p.count >= 3, p[1] == "I", p[2] == "I" {
+                    let off = max(0, Int(a[1].i)), cnt = max(0, Int(a[2].i))
+                    bytes = Array(bytes.dropFirst(off).prefix(cnt))
+                }
+                t.native = String(decoding: bytes, as: UTF8.self)
             } else {
                 t.native = try vm.stringOf(a[0].o)
             }

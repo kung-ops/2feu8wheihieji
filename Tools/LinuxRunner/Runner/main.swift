@@ -44,10 +44,47 @@ func pump(_ seconds: Double) {
     while Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
 }
 
-let args = CommandLine.arguments
-guard args.count > 1 else { print("usage: runner <apk> [tap:text]..."); exit(2) }
+var args = CommandLine.arguments
+guard args.count > 1 else {
+    print("""
+    usage: runner <apk> [tap:text]... [wait:ms]...
+           runner install <apk>            install into the virtual Android
+           runner run <package> [tap:...]  run an installed app (memory-mapped dex)
+           runner list | uninstall <package> | clear <package>
+    """)
+    exit(2)
+}
+let pm = PackageManager.shared
+switch args[1] {
+case "install":
+    guard args.count > 2 else { exit(2) }
+    let info = try pm.install(from: URL(fileURLWithPath: args[2])) { step, f in print(String(format: "  [%3.0f%%] ", f * 100) + step) }
+    pm.reload()
+    print("✓ installed \(info.packageName) \(info.versionName) (\(info.versionCode)) icon=\(info.hasIcon) dex=\(info.dexCount)")
+    let oat = (try? FileManager.default.contentsOfDirectory(atPath: pm.oatDir(info.packageName).path)) ?? []
+    print("  oat: \(oat.sorted())")
+    exit(0)
+case "list":
+    for a in pm.apps { print("\(a.packageName)\t\(a.label)\t\(a.versionName)") }
+    exit(0)
+case "uninstall", "clear":
+    guard args.count > 2 else { exit(2) }
+    if args[1] == "uninstall" { pm.uninstall(args[2]) } else { pm.clearData(args[2]) }
+    print("✓ \(args[1]) \(args[2])")
+    exit(0)
+default:
+    break
+}
 let t0 = Date()
-let apk = try ApkPackage(url: URL(fileURLWithPath: args[1]), scanCode: true)
+let apk: ApkPackage
+if args[1] == "run" {
+    guard args.count > 2, pm.app(args[2]) != nil else { print("✖ not installed"); exit(3) }
+    apk = try pm.open(args[2])
+    args.remove(at: 1)
+    print("📲 running installed app from \(pm.appDir(args[1]).path)")
+} else {
+    apk = try ApkPackage(url: URL(fileURLWithPath: args[1]), scanCode: true)
+}
 print("📦 \(apk.label) \(apk.packageName) v\(apk.versionName)  dex=\(apk.dexNames.count) classes=\(apk.classCount) launcher=\(apk.launcherActivity ?? "-")")
 apk.loadCode()
 for error in apk.codeErrors { print("✖ " + error) }
@@ -90,7 +127,12 @@ for a in args.dropFirst(2) {
         let what = String(a.dropFirst(4))
         guard let root = host.stack.last?.rootBox, let b = findBox(root, what) else { print("❓ no view '\(what)'"); continue }
         print("👆 tap \(what)")
-        b.tap()
+        if b.kind == .check {
+            b.isChecked = !b.isChecked
+            b.toggle()
+        } else {
+            b.tap()
+        }
         pump(1)
         screen()
     } else if a.hasPrefix("wait:") {
@@ -98,4 +140,9 @@ for a in args.dropFirst(2) {
     }
 }
 print(String(format: "⏱  total %.2fs, steps=%d", Date().timeIntervalSince(t0), vm.steps))
+let heapBefore = HeapBudget.shared.usedBytes
+vm.shutdown()
+pump(0.5)
+print("🧹 app stopped: Java arrays \(ProcessMemory.megabytes(heapBefore)) → \(ProcessMemory.megabytes(HeapBudget.shared.usedBytes))")
+print("🧠 Java arrays now \(ProcessMemory.megabytes(HeapBudget.shared.usedBytes)), peak \(ProcessMemory.megabytes(HeapBudget.shared.peakBytes)), limit \(ProcessMemory.megabytes(HeapBudget.shared.limit)); process \(ProcessMemory.megabytes(ProcessMemory.footprint()))")
 exit(0)

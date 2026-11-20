@@ -1,4 +1,4 @@
-name: Linux Dalvik interpreter compile check
+name: Linux Dalvik interpreter tests
 on:
   pull_request:
   push:
@@ -13,7 +13,7 @@ jobs:
           swift-version: "5.10"
       - name: Build the actual Dalvik interpreter
         run: bash Tools/LinuxRunner/build.sh
-      - name: Verify runner CLI exits nonzero without an APK
+      - name: Runner CLI exits nonzero without an APK
         shell: bash
         run: |
           set +e
@@ -22,3 +22,48 @@ jobs:
           cat runner-help.txt
           test "$code" -eq 2
           grep -q "usage: runner" runner-help.txt
+      - name: Run the Counter test app (layouts, clicks, timer, dialogs, 2nd screen)
+        shell: bash
+        run: |
+          R=Tools/LinuxRunner/build/runner
+          $R Tools/TestApps/prebuilt/counter.apk tap:plus tap:plus tap:minus tap:greet tap:fast wait:800 tap:about tap:open | tee out.txt
+          grep -q 'label #id/count "1"' out.txt
+          grep -q 'Toast: Hello, stranger!' out.txt
+          grep -q 'ticks: 5' out.txt
+          grep -q 'Virtual Android 1GB, Android 9 (SDK 28)' out.txt
+          grep -q 'primes=\[2, 3, 5, 7, 11, 13, 17, 19, 23, 29\]' out.txt
+          grep -q '20!=2432902008176640000' out.txt
+          grep -q 'file=hello file 1 exists=true len=12' out.txt
+          grep -q 'sandboxed=true' out.txt
+      - name: Run the To-do test app (ListView + ArrayAdapter, item clicks)
+        shell: bash
+        run: |
+          Tools/LinuxRunner/build/runner Tools/TestApps/prebuilt/todo.apk tap:add "tap:Buy milk" | tee todo.txt
+          grep -q 'label #id/count "3 tasks"' todo.txt
+          grep -q 'Toast: Done: Buy milk (row 0)' todo.txt
+          grep -q 'label #id/count "2 tasks"' todo.txt
+      - name: Memory limit gives OutOfMemoryError, not a crash
+        shell: bash
+        run: |
+          Tools/LinuxRunner/build/runner Tools/TestApps/prebuilt/memtest.apk "tap:Fill memory" "tap:Free memory" "tap:Fill memory" | tee mem.txt
+          test "$(grep -c 'OutOfMemoryError after' mem.txt)" -eq 2
+          grep -q 'freed, used 0 MB' mem.txt
+      - name: A stopped app gives all its memory back
+        shell: bash
+        run: |
+          Tools/LinuxRunner/build/runner Tools/TestApps/prebuilt/memtest.apk "tap:Hold 50 MB" | tee hold.txt
+          grep -q 'holding 50 MB' hold.txt
+          grep -q 'Java arrays 50.0 MB → 0.0 MB' hold.txt
+      - name: Install into the virtual phone and run from memory-mapped code
+        shell: bash
+        run: |
+          R=Tools/LinuxRunner/build/runner
+          $R install Tools/TestApps/prebuilt/counter.apk
+          $R list | grep -q com.kungops.counter
+          $R run com.kungops.counter tap:open | tee run.txt
+          grep -q 'running installed app' run.txt
+          grep -q 'file=hello file' run.txt
+          $R uninstall com.kungops.counter
+          test -z "$($R list)"
+      - name: Type-check the iOS screens against the UIKit stand-in
+        run: bash Tools/UIKitCheck/typecheck.sh

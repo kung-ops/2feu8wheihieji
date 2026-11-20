@@ -93,6 +93,7 @@ enum Framework {
             case .check: return s.contains("button") || s.contains("checkbox") || s.contains("switch") || s.contains("checkable") || s.contains("textview")
             case .image: return s.contains("imageview") || s.contains("imagebutton")
             case .container: return s.contains("viewgroup") || s.contains("layout") || s.contains("scrollview") || s.contains("cardview")
+                || (v.isList && (s.contains("listview") || s.contains("adapterview") || s.contains("gridview")))
             case .slider: return s.contains("seekbar") || s.contains("progressbar") || s.contains("slider")
             case .progress: return s.contains("progressbar") || s.contains("progressindicator")
             case .other: return false
@@ -115,10 +116,20 @@ enum Framework {
         switch (f.classDesc, f.name) {
         case ("Ljava/lang/System;", "out"): v = .obj(vm.newObject("Ljava/io/PrintStream;", native: PrintStreamBox(isErr: false)))
         case ("Ljava/lang/System;", "err"): v = .obj(vm.newObject("Ljava/io/PrintStream;", native: PrintStreamBox(isErr: true)))
-        case ("Landroid/os/Build$VERSION;", "SDK_INT"): v = .int(28)
-        case ("Landroid/os/Build$VERSION;", "RELEASE"): v = .obj(vm.str("9"))
-        case ("Landroid/os/Build;", "MODEL"): v = .obj(vm.str("iPhone (APK Sandbox)"))
-        case ("Landroid/os/Build;", "MANUFACTURER"), ("Landroid/os/Build;", "BRAND"): v = .obj(vm.str("Apple"))
+        case ("Landroid/os/Build$VERSION;", "SDK_INT"): v = .int(VirtualDevice.sdkInt)
+        case ("Landroid/os/Build$VERSION;", "RELEASE"), ("Landroid/os/Build$VERSION;", "RELEASE_OR_CODENAME"):
+            v = .obj(vm.str(VirtualDevice.release))
+        case ("Landroid/os/Build$VERSION;", "CODENAME"): v = .obj(vm.str("REL"))
+        case ("Landroid/os/Build;", "MODEL"), ("Landroid/os/Build;", "PRODUCT"): v = .obj(vm.str(VirtualDevice.model))
+        case ("Landroid/os/Build;", "MANUFACTURER"): v = .obj(vm.str(VirtualDevice.manufacturer))
+        case ("Landroid/os/Build;", "BRAND"): v = .obj(vm.str(VirtualDevice.brand))
+        case ("Landroid/os/Build;", "DEVICE"), ("Landroid/os/Build;", "HARDWARE"), ("Landroid/os/Build;", "BOARD"):
+            v = .obj(vm.str(VirtualDevice.device))
+        case ("Landroid/os/Build;", "FINGERPRINT"):
+            v = .obj(vm.str("\(VirtualDevice.brand)/\(VirtualDevice.device)/\(VirtualDevice.device):\(VirtualDevice.release)/PQ3A/1:user/release-keys"))
+        case ("Landroid/os/Build;", "SUPPORTED_ABIS"), ("Landroid/os/Build;", "SUPPORTED_64_BIT_ABIS"):
+            v = .obj(vm.newObject("[Ljava/lang/String;", native: JArray(type: "[Ljava/lang/String;", items: [.obj(vm.str("arm64-v8a"))])))
+        case ("Landroid/os/Build;", "CPU_ABI"): v = .obj(vm.str("arm64-v8a"))
         case ("Ljava/lang/Boolean;", "TRUE"): v = .obj(vm.box(.int(1), type: "Z"))
         case ("Ljava/lang/Boolean;", "FALSE"): v = .obj(vm.box(.int(0), type: "Z"))
         case ("Ljava/math/BigDecimal;", "ZERO"), ("Ljava/math/BigInteger;", "ZERO"),

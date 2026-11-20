@@ -46,7 +46,7 @@ final class ApkInfoViewController: UITableViewController {
             return
         }
         title = apk.label
-        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "▶︎ Run", style: .done, target: self, action: #selector(run))
+        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Install", style: .done, target: self, action: #selector(install))
         tableView.tableHeaderView = header(apk)
 
         var info: [Row] = [.info("Package", apk.packageName)]
@@ -68,7 +68,7 @@ final class ApkInfoViewController: UITableViewController {
         if heavy { notes.append(.list("This is a large app (\(apk.classCount) classes). Large apps usually depend on parts of Android the sandbox doesn't have, so expect missing screens.")) }
         if !notes.isEmpty { sections.append(("Compatibility", notes)) }
 
-        sections.append(("", [.action("▶︎ Run app"), .action("View AndroidManifest.xml")]))
+        sections.append(("", [.action("Install on the virtual phone"), .action("▶︎ Run without installing"), .action("View AndroidManifest.xml")]))
         if !apk.permissions.isEmpty {
             sections.append(("Permissions (\(apk.permissions.count))", apk.permissions.map { .list($0.replacingOccurrences(of: "android.permission.", with: "")) }))
         }
@@ -80,7 +80,7 @@ final class ApkInfoViewController: UITableViewController {
 
     private func header(_ apk: ApkPackage) -> UIView {
         let v = UIView(frame: CGRect(x: 0, y: 0, width: tableView.bounds.width, height: 120))
-        let iv = UIImageView(image: apk.iconImage() ?? LibraryViewController.placeholderIcon)
+        let iv = UIImageView(image: apk.iconImage() ?? Theme.letterIcon(apk.label, seed: apk.packageName, side: 72))
         iv.contentMode = .scaleAspectFit
         iv.layer.cornerRadius = 16
         iv.clipsToBounds = true
@@ -127,9 +127,19 @@ final class ApkInfoViewController: UITableViewController {
     }
 
     private func startRun(_ apk: ApkPackage) {
-        let vc = RunViewController(apk: apk)
-        let nav = UINavigationController(rootViewController: vc)
-        nav.modalPresentationStyle = .fullScreen
+        TaskManager.shared.runUninstalled(apk, from: self)
+    }
+
+    @objc private func install() {
+        let installer = InstallerViewController(apkURL: url, temporary: false)
+        installer.onFinish = { [weak self] pkg, openNow in
+            guard let self = self, pkg != nil, let nav = self.navigationController, let home = nav.viewControllers.first else { return }
+            nav.popToRootViewController(animated: false)
+            if let pkg = pkg, openNow { TaskManager.shared.launch(pkg, from: home) }
+        }
+        let nav = AppNavigationController(rootViewController: installer)
+        nav.modalPresentationStyle = .formSheet
+        if #available(iOS 13.0, *) { nav.isModalInPresentation = true }
         present(nav, animated: true)
     }
 
@@ -188,7 +198,7 @@ final class ApkInfoViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         if case .action(let t) = sections[indexPath.section].rows[indexPath.row] {
-            if t.hasPrefix("▶︎") { run() } else { showManifest() }
+            if t.hasPrefix("▶︎") { run() } else if t.hasPrefix("Install") { install() } else { showManifest() }
         }
     }
 }

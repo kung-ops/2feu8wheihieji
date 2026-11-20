@@ -305,11 +305,11 @@ extension Framework {
                     throw vm.npe("arraycopy")
                 }
                 let sp = Int(arg(1).i), dp = Int(arg(3).i), len = Int(arg(4).i)
-                guard sp >= 0, dp >= 0, len >= 0, sp + len <= src.items.count, dp + len <= dst.items.count else {
-                    throw vm.throwable("Ljava/lang/ArrayIndexOutOfBoundsException;", "arraycopy")
+                guard sp >= 0, dp >= 0, len >= 0, sp + len <= src.count, dp + len <= dst.count else {
+                    throw vm.throwable("Ljava/lang/ArrayIndexOutOfBoundsException;",
+                                       "src.length=\(src.count) srcPos=\(sp) dst.length=\(dst.count) dstPos=\(dp) length=\(len)")
                 }
-                let slice = Array(src.items[sp..<(sp + len)])
-                for k in 0..<len { dst.items[dp + k] = slice[k] }
+                dst.copy(from: src, sp, to: dp, count: len)
                 return .void
             case "exit":
                 let h = vm.host
@@ -454,47 +454,62 @@ extension Framework {
             case "sort":
                 guard let arr = arg(0).o?.native as? JArray else { throw vm.npe("sort") }
                 let et = arr.elementType
-                if p.count == 1 || (p.count == 2 && p[1] == "Ljava/util/Comparator;") {
-                    let cmp = p.count == 2 ? arg(1).o : nil
-                    switch et {
-                    case "I", "S", "B", "C": arr.items.sort { $0.i < $1.i }
-                    case "J": arr.items.sort { $0.j < $1.j }
-                    case "D": arr.items.sort { $0.d < $1.d }
-                    case "F": arr.items.sort { $0.f < $1.f }
-                    default: try sortValues(vm, &arr.items, comparator: cmp)
-                    }
+                var from = 0, to = arr.count
+                var cmp: JObject? = nil
+                if p.count >= 3 && p[1] == "I" && p[2] == "I" {
+                    from = max(0, Int(arg(1).i)); to = min(arr.count, Int(arg(2).i))
+                    if p.count == 4 { cmp = arg(3).o }
+                } else if p.count == 2 {
+                    cmp = arg(1).o
                 }
+                guard from < to else { return .void }
+                var items = arr.items
+                var part = Array(items[from..<to])
+                switch et {
+                case "I", "S", "B", "C": part.sort { $0.i < $1.i }
+                case "J": part.sort { $0.j < $1.j }
+                case "D": part.sort { $0.d < $1.d }
+                case "F": part.sort { $0.f < $1.f }
+                default: try sortValues(vm, &part, comparator: cmp)
+                }
+                items.replaceSubrange(from..<to, with: part)
+                arr.items = items
                 return .void
             case "fill":
                 guard let arr = arg(0).o?.native as? JArray else { throw vm.npe("fill") }
                 let v = p.count == 2 ? arg(1) : arg(3)
-                if p.count == 2 { for k in 0..<arr.items.count { arr.items[k] = v } }
-                else {
-                    let from = max(0, Int(arg(1).i)), to = min(arr.items.count, Int(arg(2).i))
-                    if from < to { for k in from..<to { arr.items[k] = v } }
-                }
+                if p.count == 2 { arr.fill(v, from: 0, to: arr.count) }
+                else { arr.fill(v, from: max(0, Int(arg(1).i)), to: min(arr.count, Int(arg(2).i))) }
                 return .void
             case "copyOf":
                 guard let arr = arg(0).o?.native as? JArray else { throw vm.npe("copyOf") }
-                let len = max(0, Int(arg(1).i))
-                var items = Array(arr.items.prefix(len))
-                while items.count < len { items.append(Value.defaultFor(arr.elementType)) }
-                return O(vm.newObject(arr.type, native: JArray(type: arr.type, items: items)))
+                let len = Int(arg(1).i)
+                if len < 0 { throw vm.throwable("Ljava/lang/NegativeArraySizeException;", "\(len)") }
+                try vm.checkAllocation(type: arr.type, count: len)
+                let out = JArray(type: arr.type, count: len)
+                out.copy(from: arr, 0, to: 0, count: min(len, arr.count))
+                return O(vm.newObject(arr.type, native: out))
             case "copyOfRange":
                 guard let arr = arg(0).o?.native as? JArray else { throw vm.npe("copyOfRange") }
-                let from = max(0, Int(arg(1).i)), to = max(from, Int(arg(2).i))
-                var items: [Value] = []
-                for k in from..<to { items.append(k < arr.items.count ? arr.items[k] : Value.defaultFor(arr.elementType)) }
-                return O(vm.newObject(arr.type, native: JArray(type: arr.type, items: items)))
+                let from = Int(arg(1).i), to = Int(arg(2).i)
+                guard from >= 0, from <= arr.count else {
+                    throw vm.throwable("Ljava/lang/ArrayIndexOutOfBoundsException;", "\(from)")
+                }
+                guard from <= to else { throw vm.throwable("Ljava/lang/IllegalArgumentException;", "\(from) > \(to)") }
+                try vm.checkAllocation(type: arr.type, count: to - from)
+                let out = JArray(type: arr.type, count: to - from)
+                out.copy(from: arr, from, to: 0, count: min(to, arr.count) - from)
+                return O(vm.newObject(arr.type, native: out))
             case "equals":
                 guard let x = arg(0).o?.native as? JArray, let y = arg(1).o?.native as? JArray else { return B(arg(0).o == nil && arg(1).o == nil) }
-                if x.items.count != y.items.count { return B(false) }
-                for k in 0..<x.items.count where !vm.sameValue(x.items[k], y.items[k]) {
-                    if let a = x.items[k].o, let b = y.items[k].o {
+                if x.count != y.count { return B(false) }
+                let xs = x.items, ys = y.items
+                for k in 0..<xs.count where !vm.sameValue(xs[k], ys[k]) {
+                    if let a = xs[k].o, let b = ys[k].o {
                         let eq = try vm.javaEquals(a, b)
                         if eq { continue }
                     }
-                    if x.items[k].j == y.items[k].j, x.items[k].o == nil { continue }
+                    if xs[k].j == ys[k].j, xs[k].o == nil { continue }
                     return B(false)
                 }
                 return B(true)
@@ -609,6 +624,7 @@ extension Framework {
             return nil
 
         default:
+            if let r = deviceStatic(vm, ref, a) { return r }
             return try moreStatic(vm, ref, a)
         }
     }

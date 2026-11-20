@@ -1,34 +1,65 @@
 import UIKit
 
-/// Runs an APK: shows the Android activity on top and the log console below.
+/// Runs an APK full screen, dressed like an Android phone: an app bar on
+/// top, the activity in the middle and the ◁ ○ □ navigation bar at the
+/// bottom. The log console is hidden until you ask for it.
 final class RunViewController: UIViewController, RunHost {
 
-    private let apk: ApkPackage
-    private var vm: VM?
+    let apk: ApkPackage
+    /// Set for apps installed on the virtual phone (they can be minimised).
+    let packageName: String?
+    private(set) var vm: VM?
     private var stack: [ActivityHost] = []
 
+    private let appBar = UIView()
+    private let titleLabel = UILabel()
     private let screen = UIView()
     private let console = UITextView()
+    private let navBar = UIStackView()
     private var consoleHeight: NSLayoutConstraint!
     private var logLines: [String] = []
     private var pendingLog: [String] = []
     private var logFlushScheduled = false
-    private var consoleVisible = true
-    private var closed = false
+    private var consoleVisible = false
+    private(set) var closed = false
+    private(set) var minimized = false
+    private var pendingAlerts: [UIAlertController] = []
+    private var lastMemoryWarning = Date.distantPast
 
-    init(apk: ApkPackage) {
+    /// Called once when the app has ended (closed, crashed and closed, killed).
+    var onEnd: ((RunViewController) -> Void)?
+    /// Called when the user pressed Home and the app keeps running.
+    var onMinimize: ((RunViewController) -> Void)?
+
+    init(apk: ApkPackage, packageName: String?) {
         self.apk = apk
+        self.packageName = packageName
         super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .fullScreen
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    override var preferredStatusBarStyle: UIStatusBarStyle { return .lightContent }
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(white: 0.1, alpha: 1)
-        title = apk.label
-        navigationItem.leftBarButtonItem = UIBarButtonItem(title: "✕ Close", style: .plain, target: self, action: #selector(close))
-        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Log", style: .plain, target: self, action: #selector(toggleConsole))
+        view.backgroundColor = Theme.navBar
+
+        appBar.backgroundColor = Theme.appBar
+        appBar.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(appBar)
+        titleLabel.text = apk.label
+        titleLabel.textColor = .white
+        titleLabel.font = .systemFont(ofSize: 19, weight: .semibold)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        appBar.addSubview(titleLabel)
+        let more = UIButton(type: .custom)
+        more.setImage(Theme.navIcon(.menu), for: .normal)
+        more.addTarget(self, action: #selector(showMenu), for: .touchUpInside)
+        more.accessibilityLabel = "More options"
+        more.translatesAutoresizingMaskIntoConstraints = false
+        appBar.addSubview(more)
 
         screen.backgroundColor = .white
         screen.clipsToBounds = true
@@ -42,24 +73,80 @@ final class RunViewController: UIViewController, RunHost {
         console.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(console)
 
+        navBar.axis = .horizontal
+        navBar.distribution = .fillEqually
+        navBar.backgroundColor = Theme.navBar
+        navBar.translatesAutoresizingMaskIntoConstraints = false
+        for (key, action, name) in [(Theme.NavKey.back, #selector(back), "Back"),
+                                    (Theme.NavKey.home, #selector(goHome), "Home"),
+                                    (Theme.NavKey.recents, #selector(showMenu), "Recent apps")] {
+            let b = UIButton(type: .custom)
+            b.setImage(Theme.navIcon(key), for: .normal)
+            b.addTarget(self, action: action, for: .touchUpInside)
+            b.accessibilityLabel = name
+            navBar.addArrangedSubview(b)
+        }
+        view.addSubview(navBar)
+
         let guide = view.safeAreaLayoutGuide
-        consoleHeight = console.heightAnchor.constraint(equalTo: view.heightAnchor, multiplier: 0.25)
+        consoleHeight = console.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
-            screen.topAnchor.constraint(equalTo: guide.topAnchor),
+            appBar.topAnchor.constraint(equalTo: view.topAnchor),
+            appBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            appBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            appBar.bottomAnchor.constraint(equalTo: guide.topAnchor, constant: 52),
+            titleLabel.leadingAnchor.constraint(equalTo: appBar.leadingAnchor, constant: 18),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: more.leadingAnchor, constant: -8),
+            titleLabel.bottomAnchor.constraint(equalTo: appBar.bottomAnchor, constant: -14),
+            more.trailingAnchor.constraint(equalTo: appBar.trailingAnchor, constant: -6),
+            more.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            more.widthAnchor.constraint(equalToConstant: 44),
+            more.heightAnchor.constraint(equalToConstant: 44),
+
+            screen.topAnchor.constraint(equalTo: appBar.bottomAnchor),
             screen.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             screen.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             screen.bottomAnchor.constraint(equalTo: console.topAnchor),
+
             console.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             console.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            console.bottomAnchor.constraint(equalTo: guide.bottomAnchor),
-            consoleHeight
+            console.bottomAnchor.constraint(equalTo: navBar.topAnchor),
+            consoleHeight,
+
+            navBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            navBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            navBar.bottomAnchor.constraint(equalTo: guide.bottomAnchor),
+            navBar.heightAnchor.constraint(equalToConstant: 48)
+        ])
+        // Black under the home indicator, like Android's gesture area.
+        let bottomFill = UIView()
+        bottomFill.backgroundColor = Theme.navBar
+        bottomFill.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(bottomFill, belowSubview: navBar)
+        NSLayoutConstraint.activate([
+            bottomFill.topAnchor.constraint(equalTo: navBar.bottomAnchor),
+            bottomFill.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bottomFill.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bottomFill.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
 
         start()
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if !pendingAlerts.isEmpty {
+            let a = pendingAlerts.removeFirst()
+            presentAlert(a)
+        }
+    }
+
+    // MARK: - Start
+
     private func start() {
         appendLog("APK Sandbox build \(buildCommit) – \(apk.label) (\(apk.packageName))")
+        appendLog("Virtual device: \(VirtualDevice.model), Android \(VirtualDevice.release), " +
+                  "heap \(VirtualDevice.heapLimit >> 20) MB on \(Theme.deviceName) with \(VirtualDevice.hostRAM >> 20) MB RAM")
         guard !apk.dexNames.isEmpty else {
             showError(title: "Nothing to run", message: "This APK has no classes.dex, so there is no code to run.")
             return
@@ -71,7 +158,7 @@ final class RunViewController: UIViewController, RunHost {
         if !apk.nativeLibs.isEmpty {
             appendLog("⚠︎ This APK contains native (.so) libraries – calls into native code will fail.")
         }
-        appendLog("Unpacking \(apk.dexNames.count) dex file(s), \(apk.codeSize / 1024) KB…")
+        appendLog("Loading \(apk.dexNames.count) dex file(s), \(apk.codeSize / 1024) KB…")
         let apk = self.apk
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             apk.loadCode()
@@ -91,7 +178,7 @@ final class RunViewController: UIViewController, RunHost {
                                    message: "\(launcher) was not found in the loaded DEX classes.")
                     return
                 }
-                self.appendLog("Loaded real DEX bytecode. Unsupported APIs will be reported.")
+                self.appendLog(apk.dexCacheDir != nil ? "Code is memory-mapped from the installed app." : "Code unpacked into memory.")
                 self.launch(launcher)
             }
         }
@@ -114,58 +201,147 @@ final class RunViewController: UIViewController, RunHost {
         }
     }
 
-    override func didReceiveMemoryWarning() {
-        super.didReceiveMemoryWarning()
+    // MARK: - Memory
+
+    /// Frees what can be rebuilt; stops the app only if the iPhone is still
+    /// short of memory afterwards (not on the first warning, which on 1 GB
+    /// iPhones can come from other apps). Called by TaskManager when iOS
+    /// sends a memory warning.
+    func handleMemoryWarning() {
         guard let vm = vm, !closed else { return }
-        // Stop before iOS kills the whole app.
-        vm.shutdown()
-        self.vm = nil
-        showError(title: "Out of memory",
-                  message: "This app needs more memory than this iPhone has, so the sandbox stopped it.")
+        let now = Date()
+        let since = now.timeIntervalSince(lastMemoryWarning)
+        if since < 1 { return }
+        let repeated = since < 10
+        lastMemoryWarning = now
+        if logLines.count > 100 { logLines.removeFirst(logLines.count - 100) }
+        if !consoleVisible { console.text = "" }
+        vm.trimMemory()
+        appendLog("⚠︎ iOS memory warning – freed caches (app memory \(ProcessMemory.megabytes(ProcessMemory.footprint())))")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self = self, !self.closed else { return }
+            let fp = ProcessMemory.footprint()
+            if fp > VirtualDevice.footprintLimit || (repeated && fp > VirtualDevice.footprintLimit * 8 / 10) {
+                self.kill()
+                self.showErrorOnPresenter(title: "\(self.apk.label) stopped",
+                                          message: "It needed more memory than this iPhone has free (\(ProcessMemory.megabytes(fp))).")
+            }
+        }
     }
 
-    @objc private func close() {
+    // MARK: - Navigation keys
+
+    @objc private func back() {
+        guard let vm = vm, let top = stack.last, let act = top.activity, !closed else {
+            close()
+            return
+        }
+        // Like Android: the activity decides (onBackPressed finishes it by default;
+        // the last activity finishing closes the app).
+        vm.postCall(act, "onBackPressed")
+    }
+
+    /// Home key: the app keeps running in the background if there is room,
+    /// otherwise it is paused, stopped and closed.
+    @objc func goHome() {
+        guard !closed else { return }
+        guard let vm = vm, packageName != nil, VirtualDevice.backgroundApps > 0 else {
+            // No room to keep it in the background: stop it properly.
+            if let vm = vm {
+                vm.moveToBackground { [weak self] in self?.close() }
+            } else {
+                close()
+            }
+            return
+        }
+        minimized = true
+        vm.moveToBackground()
+        dismiss(animated: true)
+        onMinimize?(self)
+    }
+
+    /// Brings a minimised app back (call after presenting this screen again).
+    func resumeFromBackground() {
+        guard minimized, !closed else { return }
+        minimized = false
+        vm?.moveToForeground()
+    }
+
+    @objc private func showMenu() {
+        let sheet = UIAlertController(title: apk.label, message: apk.packageName, preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(title: consoleVisible ? "Hide log" : "Show log", style: .default) { [weak self] _ in
+            self?.toggleConsole()
+        })
+        if packageName != nil {
+            sheet.addAction(UIAlertAction(title: "Restart app", style: .default) { [weak self] _ in self?.restart() })
+        }
+        sheet.addAction(UIAlertAction(title: "Close app", style: .default) { [weak self] _ in self?.closeGracefully() })
+        sheet.addAction(UIAlertAction(title: "Force stop", style: .destructive) { [weak self] _ in self?.close() })
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        anchor(sheet, to: navBar)
+        present(sheet, animated: true)
+    }
+
+    private func restart() {
+        guard let pkg = packageName else { return }
+        let presenter = presentingViewController
+        close()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if let p = presenter { TaskManager.shared.launch(pkg, from: p) }
+        }
+    }
+
+    /// Runs onPause / onStop / onDestroy, then closes.
+    private func closeGracefully() {
+        guard let vm = vm, let host = stack.last else { close(); return }
+        vm.post("close") { [weak vm] in
+            guard let vm = vm else { return }
+            for h in vm.activityStack.reversed() where h !== host { vm.finishActivity(h) }
+            vm.finishActivity(host)
+        }
+    }
+
+    private func toggleConsole() {
+        consoleVisible.toggle()
+        if consoleVisible { console.text = logLines.joined(separator: "\n") }
+        consoleHeight.isActive = false
+        consoleHeight = consoleVisible
+            ? console.heightAnchor.constraint(equalTo: view.heightAnchor, multiplier: 0.3)
+            : console.heightAnchor.constraint(equalToConstant: 0)
+        consoleHeight.isActive = true
+        UIView.animate(withDuration: 0.25) { self.view.layoutIfNeeded() }
+        if consoleVisible { scrollConsoleToEnd() }
+    }
+
+    /// Stops the app at once (Force stop).
+    func kill() {
         guard !closed else { return }
         closed = true
         vm?.shutdown()
         vm = nil
-        dismiss(animated: true)
+        onEnd?(self)
     }
 
-    @objc private func back() {
-        guard let top = stack.last else { return }
-        if stack.count > 1, let vm = vm, let act = top.activity {
-            vm.postCall(act, "onBackPressed")
-        } else {
-            close()
+    @objc func close() {
+        let wasMinimized = minimized
+        kill()
+        if !wasMinimized && presentingViewController != nil {
+            dismiss(animated: true)
         }
     }
 
-    @objc private func toggleConsole() {
-        consoleVisible.toggle()
-        consoleHeight.isActive = false
-        consoleHeight = console.heightAnchor.constraint(equalTo: view.heightAnchor, multiplier: consoleVisible ? 0.25 : 0)
-        consoleHeight.isActive = true
-        UIView.animate(withDuration: 0.25) { self.view.layoutIfNeeded() }
-    }
-
     private func show(_ host: ActivityHost) {
-        for v in screen.subviews { v.removeFromSuperview() }
+        for v in screen.subviews where !(v is PaddedLabel) { v.removeFromSuperview() }
         let sv = host.scrollView
         sv.translatesAutoresizingMaskIntoConstraints = false
-        screen.addSubview(sv)
+        screen.insertSubview(sv, at: 0)
         NSLayoutConstraint.activate([
             sv.topAnchor.constraint(equalTo: screen.topAnchor),
             sv.leadingAnchor.constraint(equalTo: screen.leadingAnchor),
             sv.trailingAnchor.constraint(equalTo: screen.trailingAnchor),
             sv.bottomAnchor.constraint(equalTo: screen.bottomAnchor)
         ])
-        title = host.title
-        if stack.count > 1 {
-            navigationItem.leftBarButtonItem = UIBarButtonItem(title: "‹ Back", style: .plain, target: self, action: #selector(back))
-        } else {
-            navigationItem.leftBarButtonItem = UIBarButtonItem(title: "✕ Close", style: .plain, target: self, action: #selector(close))
-        }
+        titleLabel.text = host.title
     }
 
     // MARK: - Log
@@ -174,17 +350,24 @@ final class RunViewController: UIViewController, RunHost {
         pendingLog.append(line)
         guard !logFlushScheduled else { return }
         logFlushScheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.flushLog() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.flushLog() }
     }
 
     private func flushLog() {
         logFlushScheduled = false
         logLines += pendingLog
         pendingLog.removeAll()
-        if logLines.count > 1500 { logLines.removeFirst(logLines.count - 1500) }
+        let cap = VirtualDevice.logLines
+        if logLines.count > cap { logLines.removeFirst(logLines.count - cap) }
+        guard consoleVisible else { return }
         console.text = logLines.joined(separator: "\n")
-        let end = NSRange(location: max(0, (console.text as NSString).length - 1), length: 1)
-        console.scrollRangeToVisible(end)
+        scrollConsoleToEnd()
+    }
+
+    private func scrollConsoleToEnd() {
+        let length = (console.text as NSString).length
+        guard length > 0 else { return }
+        console.scrollRangeToVisible(NSRange(location: length - 1, length: 1))
     }
 
     // MARK: - RunHost
@@ -206,11 +389,11 @@ final class RunViewController: UIViewController, RunHost {
     }
 
     func titleChanged(_ activity: ActivityHost) {
-        if stack.last === activity { title = activity.title }
+        if stack.last === activity { titleLabel.text = activity.title }
     }
 
     func showToast(_ text: String) {
-        guard !closed else { return }
+        guard !closed, view.window != nil else { return }
         let label = PaddedLabel()
         label.text = text
         label.numberOfLines = 3
@@ -240,8 +423,26 @@ final class RunViewController: UIViewController, RunHost {
         appendLog("✖ \(title): \(message)")
         let a = UIAlertController(title: title, message: message, preferredStyle: .alert)
         a.addAction(UIAlertAction(title: "Close app", style: .destructive) { [weak self] _ in self?.close() })
+        a.addAction(UIAlertAction(title: "Show log", style: .default) { [weak self] _ in
+            guard let self = self, !self.consoleVisible else { return }
+            self.toggleConsole()
+        })
         a.addAction(UIAlertAction(title: "Keep open", style: .cancel))
         presentAlert(a)
+    }
+
+    /// After the app is gone: show a message on whatever screen is visible.
+    private func showErrorOnPresenter(title: String, message: String) {
+        let presenter = presentingViewController
+        let a = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        a.addAction(UIAlertAction(title: "OK", style: .default))
+        if presenter != nil {
+            dismiss(animated: true) { presenter?.present(a, animated: true) }
+        } else if let root = UIApplication.shared.keyWindow?.rootViewController {
+            var top = root
+            while let p = top.presentedViewController { top = p }
+            top.present(a, animated: true)
+        }
     }
 
     func showDialog(title: String?, message: String?, items: [String],
@@ -260,6 +461,11 @@ final class RunViewController: UIViewController, RunHost {
     }
 
     private func presentAlert(_ a: UIAlertController) {
+        guard view.window != nil else {
+            // Minimised: show it when the app is opened again.
+            if pendingAlerts.count < 3 { pendingAlerts.append(a) }
+            return
+        }
         var top: UIViewController = self
         while let p = top.presentedViewController { top = p }
         if top is UIAlertController {

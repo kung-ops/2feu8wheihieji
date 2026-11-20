@@ -5,6 +5,8 @@ import Foundation
 final class VMThread: Thread {
     private var jobs: [() -> Void] = []
     private let cond = NSCondition()
+    /// Runs on this thread once it has been stopped (after the job in progress).
+    var onExit: (() -> Void)?
 
     override init() {
         super.init()
@@ -30,7 +32,14 @@ final class VMThread: Thread {
         while true {
             cond.lock()
             while jobs.isEmpty && !isCancelled { cond.wait() }
-            if isCancelled { cond.unlock(); return }
+            if isCancelled {
+                jobs.removeAll()
+                let exit = onExit
+                onExit = nil
+                cond.unlock()
+                autoreleasepool { exit?() }
+                return
+            }
             let job = jobs.removeFirst()
             cond.unlock()
             autoreleasepool { job() }
@@ -58,9 +67,11 @@ final class VM {
     /// mapped to the real Android class they stand in for.
     private var libraryClasses: [String: String] = [:]
     var libraryNote: String?
-    private var internedStrings: [String: JObject] = [:]
+    var internedStrings: [String: JObject] = [:]
     private var warned: Set<String> = []
     let thread = VMThread()
+    /// The app's private folders on the virtual device.
+    lazy var storage = AppStorage(packageName: apk.packageName)
 
     var steps = 0
     var stepLimit = 40_000_000
@@ -78,6 +89,8 @@ final class VM {
     var activityStack: [ActivityHost] = []
     var orphanViews: [JObject] = []
     var runnableGeneration: [ObjectIdentifier: Int] = [:]
+    /// ListViews with an adapter (see FrameworkLists).
+    var listViews: [ViewBox] = []
 
     /// The one main Looper and main Thread. Must be singletons, because apps
     /// check `Looper.getMainLooper().getThread() == Thread.currentThread()`.
@@ -102,7 +115,11 @@ final class VM {
     }
 
     func shutdown() {
+        guard !stopped else { return }
         stopped = true
+        // Once the job in progress has stopped, break the app's reference
+        // cycles so all of its memory is given back (see releaseAll).
+        thread.onExit = { [self] in self.releaseAll() }
         thread.stop()
     }
 
@@ -613,6 +630,7 @@ final class VM {
             if steps & 0x3ff == 0 {
                 if stopped { throw VMError.stopped }
                 if steps > stepLimit { throw VMError.timeout }
+                if steps & 0xfffff == 0 { try checkFootprint() }
             }
             guard pc >= 0 && pc < count else {
                 throw VMError.internalError("pc \(pc) out of range in \(m.ref.classDesc)->\(m.ref.name)")
@@ -669,7 +687,7 @@ final class VM {
                     pc += 2
                 case 0x21:
                     guard let o = O(B4) else { throw npe("length") }
-                    setI(A4, Int32((o.native as? JArray)?.items.count ?? 0)); pc += 1
+                    setI(A4, Int32((o.native as? JArray)?.count ?? 0)); pc += 1
                 case 0x22:
                     let t = dex.type(unit(pc + 1))
                     let c = classFor(t)
@@ -679,9 +697,8 @@ final class VM {
                     let t = dex.type(unit(pc + 1))
                     let size = Int(I(B4))
                     if size < 0 { throw throwable("Ljava/lang/NegativeArraySizeException;", "\(size)") }
-                    if size > 50_000_000 { throw throwable("Ljava/lang/OutOfMemoryError;") }
-                    let arr = JArray(type: t, items: [Value](repeating: Value.defaultFor(String(t.dropFirst())), count: size))
-                    set(A4, .obj(newObject(t, native: arr))); pc += 2
+                    try checkAllocation(type: t, count: size)
+                    set(A4, .obj(newObject(t, native: JArray(type: t, count: size)))); pc += 2
                 case 0x24, 0x25:
                     let t = dex.type(unit(pc + 1))
                     var vals: [Value] = []
@@ -705,14 +722,14 @@ final class VM {
                         return k % 2 == 0 ? (u & 0xff) : (u >> 8)
                     }
                     let et = arr.elementType
-                    for e in 0..<min(size, arr.items.count) {
+                    for e in 0..<min(size, arr.count) {
                         var raw: UInt64 = 0
                         for b in 0..<width { raw |= UInt64(byte(e * width + b)) << UInt64(8 * b) }
                         switch width {
-                        case 1: arr.items[e] = .int(et == "Z" ? Int32(raw) : Int32(Int8(truncatingIfNeeded: raw)))
-                        case 2: arr.items[e] = .int(et == "C" ? Int32(raw) : Int32(Int16(truncatingIfNeeded: raw)))
-                        case 4: arr.items[e] = .int(Int32(truncatingIfNeeded: raw))
-                        default: arr.items[e] = .wide(Int64(bitPattern: raw))
+                        case 1: arr[e] = .int(et == "Z" ? Int32(raw) : Int32(Int8(truncatingIfNeeded: raw)))
+                        case 2: arr[e] = .int(et == "C" ? Int32(raw) : Int32(Int16(truncatingIfNeeded: raw)))
+                        case 4: arr[e] = .int(Int32(truncatingIfNeeded: raw))
+                        default: arr[e] = .wide(Int64(bitPattern: raw))
                         }
                     }
                     pc += 3
@@ -781,19 +798,20 @@ final class VM {
                     let b = unit(pc + 1) & 0xff, c = unit(pc + 1) >> 8
                     guard let ao = O(b), let arr = ao.native as? JArray else { throw npe("array access") }
                     let idx = Int(I(c))
-                    guard idx >= 0 && idx < arr.items.count else {
-                        throw throwable("Ljava/lang/ArrayIndexOutOfBoundsException;", "length=\(arr.items.count); index=\(idx)")
+                    let length = arr.count
+                    guard idx >= 0 && idx < length else {
+                        throw throwable("Ljava/lang/ArrayIndexOutOfBoundsException;", "length=\(length); index=\(idx)")
                     }
                     if op <= 0x4a {
-                        if op == 0x45 { setW(AA, arr.items[idx].j) } else { set(AA, arr.items[idx]) }
+                        if op == 0x45 { setW(AA, arr[idx].j) } else { set(AA, arr[idx]) }
                     } else {
                         switch op {
-                        case 0x4c: arr.items[idx] = .wide(J(AA))
-                        case 0x4d: arr.items[idx] = R(AA)
-                        case 0x4f: arr.items[idx] = .int(Int32(Int8(truncatingIfNeeded: I(AA))))
-                        case 0x50: arr.items[idx] = .int(Int32(UInt16(truncatingIfNeeded: I(AA))))
-                        case 0x51: arr.items[idx] = .int(Int32(Int16(truncatingIfNeeded: I(AA))))
-                        default: arr.items[idx] = .int(I(AA))
+                        case 0x4c: arr[idx] = .wide(J(AA))
+                        case 0x4d: arr[idx] = R(AA)
+                        case 0x4f: arr[idx] = .int(Int32(Int8(truncatingIfNeeded: I(AA))))
+                        case 0x50: arr[idx] = .int(Int32(UInt16(truncatingIfNeeded: I(AA))))
+                        case 0x51: arr[idx] = .int(Int32(Int16(truncatingIfNeeded: I(AA))))
+                        default: arr[idx] = .int(I(AA))
                         }
                     }
                     pc += 2
@@ -909,6 +927,26 @@ final class VM {
             cur = k.superclass
         }
         return nil
+    }
+
+    /// Throws java.lang.OutOfMemoryError (like Android does) when an array
+    /// wouldn't fit in the virtual device's heap or in this iPhone's memory.
+    func checkAllocation(type: String, count: Int) throws {
+        let bytes = JArray.bytes(type: type, count: count)
+        let budget = HeapBudget.shared
+        if !budget.canAllocate(bytes) {
+            throw throwable("Ljava/lang/OutOfMemoryError;",
+                            "Failed to allocate a \(bytes) byte allocation with \(budget.freeBytes) free bytes and \(budget.limit >> 20)MB heap limit")
+        }
+    }
+
+    /// Long loops that build lots of small objects are checked here.
+    func checkFootprint() throws {
+        let fp = ProcessMemory.footprint()
+        if fp > VirtualDevice.footprintLimit {
+            throw throwable("Ljava/lang/OutOfMemoryError;",
+                            "App is using \(ProcessMemory.megabytes(fp)); the sandbox limit on this iPhone is \(ProcessMemory.megabytes(VirtualDevice.footprintLimit))")
+        }
     }
 
     func sameValue(_ a: Value, _ b: Value) -> Bool {

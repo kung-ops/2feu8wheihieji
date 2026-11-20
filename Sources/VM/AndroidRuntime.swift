@@ -49,6 +49,41 @@ extension VM {
         DispatchQueue.main.async { screen?.finish(host) }
     }
 
+    /// The user pressed Home: the visible activity is paused and stopped,
+    /// like on Android. `then` runs on the main thread afterwards.
+    func moveToBackground(then: (() -> Void)? = nil) {
+        post("background") { [weak self] in
+            defer { if let then = then { DispatchQueue.main.async(execute: then) } }
+            guard let self = self, let a = self.currentActivity?.activity else { return }
+            _ = try? self.call(a, "onPause")
+            _ = try? self.call(a, "onStop")
+            _ = try? self.call(a, "onTrimMemory", params: ["I"], args: [.int(20)])
+        }
+    }
+
+    /// The user came back to the app.
+    func moveToForeground() {
+        post("foreground") { [weak self] in
+            guard let self = self, let a = self.currentActivity?.activity else { return }
+            try self.call(a, "onRestart")
+            try self.call(a, "onStart")
+            try self.call(a, "onResume")
+        }
+    }
+
+    /// Frees caches that are rebuilt on demand (iOS memory warning).
+    func trimMemory() {
+        post("trim") { [weak self] in
+            guard let self = self else { return }
+            for d in self.apk.dexFiles { d.trimCaches() }
+            for c in self.classes.values { c.vcache.removeAll(); c.vmiss.removeAll() }
+            if let a = self.currentActivity?.activity {
+                _ = try? self.call(a, "onLowMemory")
+                _ = try? self.call(a, "onTrimMemory", params: ["I"], args: [.int(80)])
+            }
+        }
+    }
+
     func activityHost(_ ctx: JObject?) -> ActivityHost? {
         if let b = ctx?.native as? ActivityBox { return b.host }
         return currentActivity
@@ -138,6 +173,8 @@ extension VM {
                 try call(l, "onClick", params: ["Landroid/view/View;"], args: [.obj(o)])
             } else if let name = b.onClickAttr, let act = (host ?? currentActivity)?.activity {
                 try callByName(act, name, args: [.obj(o)])
+            } else {
+                _ = try listItemClicked(b)
             }
         case "progress":
             if let l = b.seekListener {
@@ -197,7 +234,7 @@ extension VM {
         case "F": return Boxed.javaDouble(Double(v.f))
         case "D": return Boxed.javaDouble(v.d)
         case "[C":
-            if let a = v.o?.native as? JArray { return charsToString(a.items) }
+            if let a = v.o?.native as? JArray { return String(decoding: a.utf16, as: UTF16.self) }
             return "null"
         default: return try stringOf(v.o)
         }

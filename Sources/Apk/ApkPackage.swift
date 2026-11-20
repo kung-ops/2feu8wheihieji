@@ -1,4 +1,7 @@
 import UIKit
+#if canImport(ImageIO)
+import ImageIO
+#endif
 
 /// Everything we know about an APK after opening it.
 final class ApkPackage {
@@ -63,17 +66,21 @@ final class ApkPackage {
         readManifest()
 
         if scanCode {
-            // One dex at a time, header only; each buffer is freed right away.
+            // Only the 112-byte header of each dex is decompressed.
             for name in names {
-                autoreleasepool {
-                    if let bytes = zip.read(name), let c = DexFile.headerCounts(bytes) {
-                        classCount += c.classes
-                        methodCount += c.methods
-                    }
+                if let head = zip.readPrefix(name, maxBytes: 0x70),
+                   let c = DexFile.headerCounts(head, fileSize: zip.size(of: name)) {
+                    classCount += c.classes
+                    methodCount += c.methods
                 }
             }
         }
     }
+
+    /// Folder with this app's dex files already unpacked (an installed app's
+    /// "oat" folder). The files there are memory-mapped instead of being
+    /// decompressed into RAM on every launch.
+    var dexCacheDir: URL?
 
     /// Size of all code once unpacked, in bytes.
     var codeSize: Int {
@@ -88,6 +95,26 @@ final class ApkPackage {
         var errors: [String] = []
         for name in dexNames {
             autoreleasepool {
+                if let dir = dexCacheDir {
+                    let file = dir.appendingPathComponent(name)
+                    var ok = FileManager.default.fileExists(atPath: file.path)
+                    if ok, let size = try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber,
+                       size.intValue != zip.size(of: name) {
+                        ok = false
+                    }
+                    if !ok {
+                        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                        ok = zip.extract(name, to: file)
+                    }
+                    if ok, let store = ByteStore(mapping: file.path) {
+                        do {
+                            dexes.append(try DexFile(store: store))
+                            return
+                        } catch {
+                            try? FileManager.default.removeItem(at: file)
+                        }
+                    }
+                }
                 guard let bytes = zip.read(name) else {
                     errors.append("Could not decompress \(name)")
                     return
@@ -166,14 +193,41 @@ final class ApkPackage {
 
     // MARK: - Assets
 
-    func iconImage() -> UIImage? {
-        guard let p = iconPath, let bytes = zip.read(p) else { return nil }
-        return UIImage(data: Data(bytes))
+    /// The launcher icon file (PNG/WebP/JPEG bytes), if the APK has a bitmap one.
+    func iconData() -> Data? {
+        guard let p = iconPath, !p.hasSuffix(".xml"), let bytes = zip.read(p), !bytes.isEmpty else { return nil }
+        return Data(bytes)
+    }
+
+    func iconImage(maxSide: Int = 192) -> UIImage? {
+        guard let data = iconData() else { return nil }
+        return ApkPackage.decodeImage(data, maxSide: maxSide)
     }
 
     func image(resource id: Int) -> UIImage? {
-        guard let p = resources?.filePath(id, preferBitmap: true), let bytes = zip.read(p) else { return nil }
-        return UIImage(data: Data(bytes))
+        guard let p = resources?.filePath(id, preferBitmap: true), !p.hasSuffix(".xml"),
+              let bytes = zip.read(p) else { return nil }
+        return ApkPackage.decodeImage(Data(bytes), maxSide: VirtualDevice.maxBitmapSide)
+    }
+
+    /// Decodes an image no larger than `maxSide` pixels, without first
+    /// decoding a huge bitmap at full size (a 4000×3000 PNG would need 48 MB).
+    static func decodeImage(_ data: Data, maxSide: Int) -> UIImage? {
+        #if canImport(ImageIO)
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxSide
+        ]
+        if let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) {
+            return UIImage(cgImage: cg)
+        }
+        return UIImage(data: data)
+        #else
+        return UIImage(data: data)
+        #endif
     }
 
     func layout(_ id: Int) -> AXMLNode? {
