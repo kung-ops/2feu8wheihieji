@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item type="id" name="title"/>
+    <item type="id" name="count"/>
+    <item type="id" name="minus"/>
+    <item type="id" name="plus"/>
+    <item type="id" name="reset"/>
+    <item type="id" name="name"/>
+    <item type="id" name="greet"/>
+    <item type="id" name="fast"/>
+    <item type="id" name="ticks"/>
+    <item type="id" name="open"/>
+    <item type="id" name="about"/>
+</resources>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="16dp">
+    <TextView android:id="@id/title" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="@string/hello" android:textSize="20sp" android:textStyle="bold"/>
+    <TextView android:id="@id/count" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="0" android:textSize="40sp" android:gravity="center"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+        <Button android:id="@id/minus" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="-"/>
+        <Button android:id="@id/plus" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="+"/>
+        <Button android:id="@id/reset" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Reset" android:onClick="onResetClicked"/>
+    </LinearLayout>
+    <EditText android:id="@id/name" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Your name"/>
+    <Button android:id="@id/greet" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Greet"/>
+    <CheckBox android:id="@id/fast" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Run timer"/>
+    <TextView android:id="@id/ticks" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="ticks: 0"/>
+    <Button android:id="@id/open" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Open second screen"/>
+    <Button android:id="@id/about" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="About this phone"/>
+</LinearLayout>

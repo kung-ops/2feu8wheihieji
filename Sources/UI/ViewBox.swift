@@ -28,6 +28,14 @@ final class ViewBox: NSObject {
     weak var parent: ViewBox?
     weak var jobj: JObject?
     var maxProgress: Int32 = 100
+    /// ListView / GridView (rows come from `adapter`).
+    var isList = false
+    var adapter: JObject?
+    var itemClickListener: JObject?
+    var itemLongClickListener: JObject?
+    var emptyView: ViewBox?
+    /// Row index when this view is a row of a list, else -1.
+    var listPosition = -1
     /// Cursor / selection (UTF-16 offsets); -1 means "end of text".
     var selStart: Int = -1
     var selEnd: Int = -1
@@ -189,6 +197,25 @@ final class ViewBox: NSObject {
         for r in gridRows { r.removeFromSuperview() }
         gridRows.removeAll()
         children.removeAll()
+    }
+
+    /// Main thread: makes a list row look and behave like one (tappable,
+    /// at least 44 pt tall, with a hairline under it).
+    func decorateAsListRow() {
+        makeTappable()
+        let minHeight = view.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+        minHeight.priority = UILayoutPriority(999)
+        minHeight.isActive = true
+        let line = UIView()
+        line.backgroundColor = UIColor(white: 0.85, alpha: 1)
+        line.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(line)
+        NSLayoutConstraint.activate([
+            line.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            line.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            line.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            line.heightAnchor.constraint(equalToConstant: 0.5)
+        ])
     }
 
     func find(id: Int) -> ViewBox? {

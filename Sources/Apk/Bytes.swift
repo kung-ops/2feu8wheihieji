@@ -1,16 +1,72 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
+/// Read-only bytes that are either copied into our own buffer or
+/// memory-mapped from a file. Mapped bytes (installed apps' .dex files) are
+/// "clean" memory: iOS can drop and re-read those pages under pressure
+/// instead of counting them against the app, which matters on 1 GB iPhones.
+final class ByteStore {
+    let base: UnsafePointer<UInt8>
+    let count: Int
+    private let mapped: Bool
+
+    init(copying bytes: [UInt8]) {
+        let p = UnsafeMutablePointer<UInt8>.allocate(capacity: max(1, bytes.count))
+        if bytes.isEmpty {
+            p.initialize(to: 0)
+        } else {
+            bytes.withUnsafeBufferPointer { p.initialize(from: $0.baseAddress!, count: bytes.count) }
+        }
+        base = UnsafePointer(p)
+        count = bytes.count
+        mapped = false
+    }
+
+    /// Maps a whole file read-only. Returns nil if it can't be opened.
+    init?(mapping path: String) {
+        let fd = open(path, O_RDONLY)
+        if fd < 0 { return nil }
+        defer { close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0, st.st_size > 0 else { return nil }
+        let size = Int(st.st_size)
+        guard let m = mmap(nil, size, PROT_READ, MAP_PRIVATE, fd, 0),
+              m != UnsafeMutableRawPointer(bitPattern: -1) else { return nil }
+        base = UnsafePointer(m.assumingMemoryBound(to: UInt8.self))
+        count = size
+        mapped = true
+    }
+
+    deinit {
+        if mapped {
+            munmap(UnsafeMutableRawPointer(mutating: base), count)
+        } else {
+            UnsafeMutablePointer(mutating: base).deallocate()
+        }
+    }
+}
 
 /// Bounds-checked little-endian reader. Out-of-range reads return 0 so a
 /// malformed APK can never crash the app.
 struct Bytes {
-    let b: [UInt8]
+    let store: ByteStore
+    private let p: UnsafePointer<UInt8>
+    let count: Int
 
-    init(_ b: [UInt8]) { self.b = b }
+    init(_ b: [UInt8]) { self.init(store: ByteStore(copying: b)) }
 
-    var count: Int { return b.count }
+    init(store: ByteStore) {
+        self.store = store
+        p = store.base
+        count = store.count
+    }
 
     @inline(__always) func u8(_ o: Int) -> Int {
-        return (o >= 0 && o < b.count) ? Int(b[o]) : 0
+        return (o >= 0 && o < count) ? Int(p[o]) : 0
     }
     @inline(__always) func u16(_ o: Int) -> Int {
         return u8(o) | (u8(o + 1) << 8)
@@ -22,8 +78,8 @@ struct Bytes {
         return Int32(truncatingIfNeeded: u32(o))
     }
     func slice(_ o: Int, _ n: Int) -> [UInt8] {
-        guard o >= 0, n >= 0, o + n <= b.count else { return [] }
-        return Array(b[o..<(o + n)])
+        guard o >= 0, n >= 0, o + n <= count else { return [] }
+        return Array(UnsafeBufferPointer(start: p + o, count: n))
     }
 
     /// Reads an unsigned LEB128 value, advancing `o`.

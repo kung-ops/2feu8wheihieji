@@ -1,6 +1,8 @@
 import Foundation
 
-/// Where imported APKs are kept: Documents/ (visible in the Files app).
+/// APK files the user keeps in the app's Documents folder ("Downloads"):
+/// visible in the Files app under On My iPhone › APK Sandbox, and in
+/// Finder / iTunes File Sharing.
 enum ApkStore {
     static var documents: URL {
         return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -20,14 +22,33 @@ enum ApkStore {
         }
     }
 
-    /// Copies a picked / opened file into Documents and returns the copy.
+    /// Folder for APKs waiting in the installer (not shown in Files).
+    static var staging: URL {
+        return FileManager.default.temporaryDirectory.appendingPathComponent("incoming", isDirectory: true)
+    }
+
+    /// Makes a private copy of a picked / opened file for the installer.
+    /// Copies handed to us by iOS (Inbox folders) are moved, not copied.
+    static func stage(_ url: URL) throws -> URL {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let fm = FileManager.default
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        var name = url.deletingPathExtension().lastPathComponent
+        if name.isEmpty { name = "app" }
+        let dest = staging.appendingPathComponent(String(UUID().uuidString.prefix(8)) + "-" + name + ".apk")
+        let isInbox = url.path.contains("/Inbox/") || url.path.contains("-Inbox/")
+        if isInbox, (try? fm.moveItem(at: url, to: dest)) != nil { return dest }
+        try fm.copyItem(at: url, to: dest)
+        return dest
+    }
+
+    /// Copies a picked file into Downloads (Documents) and returns the copy.
     static func importFile(_ url: URL) throws -> URL {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         let fm = FileManager.default
-        // Already ours?
         if url.standardizedFileURL.deletingLastPathComponent() == documents.standardizedFileURL { return url }
-
         var name = url.lastPathComponent
         if url.pathExtension.lowercased() != "apk" { name += ".apk" }
         var dest = documents.appendingPathComponent(name)
@@ -38,8 +59,13 @@ enum ApkStore {
             n += 1
         }
         try fm.copyItem(at: url, to: dest)
-        if url.path.contains("/Inbox/") { try? fm.removeItem(at: url) }
+        if url.path.contains("/Inbox/") || url.path.contains("-Inbox/") { try? fm.removeItem(at: url) }
         return dest
+    }
+
+    /// Removes leftovers from earlier installs.
+    static func cleanStaging() {
+        try? FileManager.default.removeItem(at: staging)
     }
 
     static func sizeString(_ url: URL) -> String {

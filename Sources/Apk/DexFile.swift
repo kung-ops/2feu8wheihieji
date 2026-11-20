@@ -128,8 +128,13 @@ final class DexFile {
         return true
     }
 
-    init(bytes: [UInt8]) throws {
-        d = Bytes(bytes)
+    convenience init(bytes: [UInt8]) throws {
+        try self.init(store: ByteStore(copying: bytes))
+    }
+
+    /// `store` may be a memory-mapped file (see `ByteStore`).
+    init(store: ByteStore) throws {
+        d = Bytes(store: store)
         guard DexFile.validHeader(d) else { throw DexError.badMagic }
         stringCount = d.u32(56); stringIdsOff = d.u32(60)
         typeCount = d.u32(64); typeIdsOff = d.u32(68)
@@ -143,11 +148,20 @@ final class DexFile {
     var methodRefCount: Int { return methodCount }
     var classDefCount: Int { return classDefCountValue }
 
-    /// Header-only peek at a dex file's size (no parsing).
-    static func headerCounts(_ bytes: [UInt8]) -> (classes: Int, methods: Int)? {
+    /// Header-only peek at a dex file's size (no parsing). `bytes` may be just
+    /// the first 0x70 bytes; `fileSize` is the size of the whole file.
+    static func headerCounts(_ bytes: [UInt8], fileSize: Int) -> (classes: Int, methods: Int)? {
         let d = Bytes(bytes)
-        guard validHeader(d) else { return nil }
+        guard d.count >= 0x70, d.u8(0) == 0x64, d.u8(1) == 0x65, d.u8(2) == 0x78,
+              d.u32(32) == fileSize, d.u32(36) == 0x70 else { return nil }
         return (d.u32(96), d.u32(88))
+    }
+
+    /// Clears lookup caches (they refill on demand). VM thread only.
+    func trimCaches() {
+        stringCache.removeAll()
+        methodRefCache.removeAll()
+        fieldRefCache.removeAll()
     }
 
     func hasClass(_ desc: String) -> Bool { return classIndex[desc] != nil }

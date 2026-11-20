@@ -232,7 +232,7 @@ extension Framework {
         case "clearAnimation":
             return .void
         default:
-            return nil
+            return try listViewMethod(vm, t, box, ref, a)
         }
     }
 
@@ -299,10 +299,7 @@ extension Framework {
         case "getLayoutInflater":
             return O(vm.newObject("Landroid/view/LayoutInflater;", native: InflaterBox()))
         case "getSystemService":
-            if p.first == "Ljava/lang/String;", (a[0].o?.native as? String) == "layout_inflater" {
-                return O(vm.newObject("Landroid/view/LayoutInflater;", native: InflaterBox()))
-            }
-            return nil
+            return systemService(vm, ref, a)
         case "getSharedPreferences", "getPreferences":
             let name = p.first == "Ljava/lang/String;" ? ((a[0].o?.native as? String) ?? "default") : "activity"
             let key = "apk.prefs.\(vm.apk.packageName).\(name)"
@@ -322,7 +319,7 @@ extension Framework {
         case "getMainLooper":
             return O(vm.newObject("Landroid/os/Looper;"))
         default:
-            return nil
+            return contextDir(vm, ref, a)
         }
     }
 }
