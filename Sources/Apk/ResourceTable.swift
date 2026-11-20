@@ -9,8 +9,16 @@ final class ResourceTable {
         let isDefault: Bool   // no language / qualifiers except density
     }
 
+    /// A style (or other bag): its parent style and its attribute → value items.
+    struct Bag {
+        let parent: Int
+        let items: [(attr: Int, value: ResValue)]
+        let isDefault: Bool
+    }
+
     private(set) var values: [Int: [Entry]] = [:]
     private(set) var names: [Int: String] = [:]     // "layout/activity_main"
+    private(set) var bags: [Int: Bag] = [:]
     private var globalPool = StringPool()
 
     init?(bytes: [UInt8]) {
@@ -106,8 +114,22 @@ final class ResourceTable {
             } else {
                 keyIdx = d.u32(e + 4)
                 if eFlags & 0x0001 != 0 {
-                    // complex (style/array/plurals) – record the name only
+                    // complex (style/array/plurals): keep styles' items for layouts
                     if names[resId] == nil, let k = keyNames[keyIdx] { names[resId] = "\(typeName)/\(k)" }
+                    if typeName == "style", bags[resId] == nil || (isDefault && bags[resId]?.isDefault == false) {
+                        let parent = d.u32(e + 8)
+                        let count = d.u32(e + 12)
+                        var items: [(attr: Int, value: ResValue)] = []
+                        var m = e + eSize
+                        for _ in 0..<min(count, 512) {
+                            let attr = d.u32(m)
+                            let vType = d.u8(m + 7)
+                            let vData = d.u32(m + 8)
+                            items.append((attr, ResValue(type: vType, data: vData, string: vType == ResValue.typeString ? globalPool[vData] : nil)))
+                            m += 12
+                        }
+                        bags[resId] = Bag(parent: parent, items: items, isDefault: isDefault)
+                    }
                     continue
                 }
                 let v = e + eSize
@@ -121,7 +143,14 @@ final class ResourceTable {
     }
 
     /// Best value for normal use (default language, default config).
+    /// Android's own resources (0x01……) come from the Android 9 pack.
     func value(_ id: Int) -> ResValue? {
+        if FrameworkResources.isFramework(id) { return FrameworkResources.shared?.value(id) }
+        return ownValue(id)
+    }
+
+    /// This table's own value for `id` (used to build the Android pack).
+    func ownValue(_ id: Int) -> ResValue? {
         guard let list = values[id], !list.isEmpty else { return nil }
         if let def = list.first(where: { $0.isDefault && $0.density == 0 }) { return def.value }
         if let def = list.first(where: { $0.isDefault }) { return def.value }
@@ -147,6 +176,7 @@ final class ResourceTable {
 
     /// Path of a file resource (layout or drawable). Prefers the highest-density PNG.
     func filePath(_ id: Int, preferBitmap: Bool = false) -> String? {
+        if FrameworkResources.isFramework(id) { return FrameworkResources.shared?.filePath(id) }
         guard let list = values[id] else { return nil }
         var candidates: [(String, Int)] = []
         for e in list {
@@ -163,4 +193,36 @@ final class ResourceTable {
     }
 
     func name(_ id: Int) -> String? { return names[id] }
+
+    /// Name of an attribute (0x7f…… from this app, 0x0101…… from Android):
+    /// "onClick", "textColor"…
+    func attrName(_ id: Int) -> String? {
+        if FrameworkResources.isFramework(id) { return FrameworkResources.shared?.attrName(id) }
+        guard let n = names[id], n.hasPrefix("attr/") else { return nil }
+        return String(n.dropFirst(5))
+    }
+
+    /// A style's items by attribute name, parents first so the style's own
+    /// items win (Android's style inheritance). Theme references (?attr/…)
+    /// are left out.
+    func styleItems(_ id: Int) -> [(String, ResValue)] {
+        var chain: [Bag] = []
+        var cur = id
+        var seen: Set<Int> = []
+        while cur != 0, chain.count < 12, seen.insert(cur).inserted {
+            guard let b = FrameworkResources.isFramework(cur) ? FrameworkResources.shared?.bag(cur) : bags[cur] else { break }
+            chain.append(b)
+            cur = b.parent
+        }
+        var out: [String: ResValue] = [:]
+        var order: [String] = []
+        for b in chain.reversed() {
+            for (attr, v) in b.items where v.type != 0x02 {
+                guard let n = attrName(attr) else { continue }
+                if out[n] == nil { order.append(n) }
+                out[n] = v
+            }
+        }
+        return order.map { ($0, out[$0]!) }
+    }
 }

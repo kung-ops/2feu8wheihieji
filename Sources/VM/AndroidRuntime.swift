@@ -6,10 +6,35 @@ extension VM {
 
     // MARK: - Activities
 
+    /// Creates the manifest's Application class and runs its onCreate, as
+    /// Android does before the first activity (apps set up their data there).
+    func startApplication() throws {
+        guard !applicationStarted else { return }
+        applicationStarted = true
+        guard let name = apk.applicationClass else { return }
+        let desc = VMClass.descriptor(name)
+        guard hasAppClass(desc) else { return }
+        let c = classFor(desc)
+        try ensureInit(c)
+        let obj = JObject(cls: c)
+        let label = apk.label
+        let host: ActivityHost = onMain { ActivityHost(className: c.javaName, title: label) }
+        obj.native = ActivityBox(host: host)
+        host.activity = obj
+        applicationHost = host
+        application = obj
+        log("▶︎ Application \(c.javaName)")
+        let initRef = DexMethodRef(classDesc: desc, name: "<init>", params: [], ret: "V", sig: "<init>()V")
+        _ = try invoke(kind: 2, ref: initRef, args: [.obj(obj)])
+        try call(obj, "attachBaseContext", params: ["Landroid/content/Context;"], args: [.obj(obj)])
+        try call(obj, "onCreate")
+    }
+
     func launchActivity(_ desc: String, intent: JObject?) throws {
         guard hasAppClass(desc) else {
             throw VMError.unsupported("activity \(VMClass.javaName(desc)) was not found in the APK's code")
         }
+        try startApplication()
         let c = classFor(desc)
         try ensureInit(c)
         let obj = JObject(cls: c)
@@ -134,7 +159,46 @@ extension VM {
         }
         installCanvasHandlers(box, obj)
         for c in box.children { wrap(c, in: host) }
+        // Like LayoutInflater: a custom view hears when its children are ready.
+        if appClass != nil, findVirtual(obj.cls, "onFinishInflate()V") != nil {
+            do { try call(obj, "onFinishInflate") } catch {
+                warnOnce("\(obj.cls.javaName).onFinishInflate failed: \(error)")
+            }
+        }
+        if appClass != nil, !box.isCanvas { scheduleMeasure(box, obj) }
         return obj
+    }
+
+    /// A custom TextView/LinearLayout… that overrides onMeasure or onSizeChanged
+    /// hears its size once the screen is up, as on Android (e.g. the Calculator
+    /// works out how many digits fit in onMeasure).
+    func scheduleMeasure(_ box: ViewBox, _ obj: JObject) {
+        let measure = findVirtual(obj.cls, "onMeasure(II)V") != nil
+        let sized = findVirtual(obj.cls, "onSizeChanged(IIII)V") != nil
+        guard measure || sized else { return }
+        post("measure") { [weak self, weak obj, weak box] in
+            guard let vm = self, let o = obj, let b = box else { return }
+            let screen = onMain { () -> CGSize in
+                #if APKSANDBOX_RUNNER
+                return CGSize(width: 375, height: 667)
+                #else
+                return UIScreen.main.bounds.size
+                #endif
+            }
+            let laid = onMain { b.view.bounds.size }
+            let w = Int32((laid.width > 0 ? laid.width : screen.width) * Graphics.density)
+            let h = Int32((laid.height > 0 ? laid.height : 48) * Graphics.density)
+            if b.pxWidth == 0 { b.pxWidth = w }
+            if b.pxHeight == 0 { b.pxHeight = h }
+            if measure {
+                let exactly = Int32(1 << 30), atMost = Int32(bitPattern: 0x80000000)
+                try vm.call(o, "onMeasure", params: ["I", "I"],
+                            args: [.int(exactly | w), .int(atMost | Int32(screen.height * Graphics.density))])
+            }
+            if sized {
+                try vm.call(o, "onSizeChanged", params: ["I", "I", "I", "I"], args: [.int(w), .int(h), .zero, .zero])
+            }
+        }
     }
 
     /// Runs the app's View constructor: (Context, AttributeSet) or (Context).
@@ -238,7 +302,7 @@ extension VM {
         let touches = wantsTouches(obj)
         let custom = obj.cls.isApp
         onMain {
-            guard let cv = box.view as? CanvasView else { return }
+            guard let cv = box.canvasView else { return }
             if touches {
                 cv.acceptsTouches = true
                 cv.isUserInteractionEnabled = true
@@ -287,6 +351,8 @@ extension VM {
             return onMain { v.text }
         case let e as EditableBox:
             return onMain { e.box.text }
+        case let bi as BigIntegerBox:
+            return bi.value.toString()
         case let d as DecimalBox:
             return Framework.plainString(d.value, scale: d.isInteger ? nil : o.fields["__scale"].map { Int($0.i) })
         case let c as ClassRef:
@@ -312,6 +378,7 @@ extension VM {
             if x.kind == .double || x.kind == .float { return x.asDouble == y.asDouble }
             return x.value.i == y.value.i && x.kind == y.kind
         }
+        if let x = a.native as? BigIntegerBox, let y = b.native as? BigIntegerBox { return x.value == y.value }
         if a.cls.isApp, findVirtual(a.cls, "equals(Ljava/lang/Object;)Z") != nil {
             let r = try call(a, "equals", params: ["Ljava/lang/Object;"], ret: "Z", args: [.obj(b)])
             return (r?.i ?? 0) != 0
@@ -374,6 +441,11 @@ extension VM {
             switch conv {
             case "d":
                 var n: Int64 = 0
+                if let bi = arg?.native as? BigIntegerBox, bi.value.bitLength >= 63 {
+                    out += bi.value.toString()
+                    continue
+                }
+                if let bi = arg?.native as? BigIntegerBox { n = bi.value.int64Value }
                 if let b = arg?.native as? Boxed { n = b.kind == .long ? b.value.j : Int64(b.value.i) }
                 var s = String(format: "%" + cspec + "lld", n)
                 if grouping {

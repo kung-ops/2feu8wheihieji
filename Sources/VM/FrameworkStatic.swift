@@ -619,13 +619,15 @@ extension Framework {
                 return O(v)
             }
             if n == "generateViewId" { return I(Int32.random(in: 0x100000..<0x7000000)) }
-            return nil
+            return try compatStatic(vm, ref, a)
 
         case "Landroid/widget/Toast$Companion;":
             return nil
 
         default:
             if let r = try graphicsStatic(vm, ref, a) { return r }
+            if let r = try compatStatic(vm, ref, a) { return r }
+            if let r = try sqliteStatic(vm, ref, a) { return r }
             if let r = deviceStatic(vm, ref, a) { return r }
             return try moreStatic(vm, ref, a)
         }

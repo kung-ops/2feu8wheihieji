@@ -65,6 +65,20 @@ final class AndroidLayoutInflater {
                 "glsurfaceview", "spinner", "calendarview", "datepicker", "timepicker"].contains(s)
     }
 
+    /// The widget kind for an element, looking through the app's own view
+    /// classes: a custom class that extends TextView shows text, one that
+    /// extends LinearLayout holds children, one that extends View draws.
+    func kind(of element: String, hasChildren: Bool) -> ViewBox.Kind {
+        if !element.hasPrefix("android."), let base = apk.frameworkAncestor(ofView: element) {
+            let simple = AndroidLayoutInflater.simpleName(base)
+            if simple == "View" || simple == "SurfaceView" || simple == "TextureView" {
+                return hasChildren ? .container : .other
+            }
+            return AndroidLayoutInflater.kind(for: simple, hasChildren: hasChildren)
+        }
+        return AndroidLayoutInflater.kind(for: element, hasChildren: hasChildren)
+    }
+
     /// Creates an empty widget for an element / class name.
     func make(_ element: String, orientation: Int? = nil, hasChildren: Bool = false) -> ViewBox {
         let simple = AndroidLayoutInflater.simpleName(element)
@@ -76,7 +90,7 @@ final class AndroidLayoutInflater {
             l.numberOfLines = 0
             return ViewBox(kind: .other, elementName: element, view: l, control: l)
         }
-        let k = AndroidLayoutInflater.kind(for: element, hasChildren: hasChildren)
+        let k = kind(of: element, hasChildren: hasChildren)
         switch k {
         case .label:
             let l = UILabel()
@@ -156,6 +170,19 @@ final class AndroidLayoutInflater {
 
     // MARK: - XML
 
+    /// Adds the items of the element's style="@style/…" (and its parents) as
+    /// attributes, behind the element's own ones, the way Android applies a
+    /// style: e.g. a calculator key's android:onClick set in PadButtonStyle.
+    func mergeStyle(_ node: AXMLNode) {
+        guard !node.styleMerged else { return }
+        node.styleMerged = true
+        guard let st = node.attr("style"), st.type == ResValue.typeReference, st.data != 0,
+              let table = apk.resources else { return }
+        for (name, v) in table.styleItems(st.data) where node.attr(name) == nil {
+            node.attrs.append((name, v))
+        }
+    }
+
     func inflate(_ node: AXMLNode) -> ViewBox {
         depth += 1
         defer { depth -= 1 }
@@ -166,6 +193,7 @@ final class AndroidLayoutInflater {
             return box
         }
 
+        mergeStyle(node)
         var orientation: Int? = nil
         if let o = node.attr("orientation") { orientation = o.data }
         let box = make(node.name, orientation: orientation, hasChildren: !node.children.isEmpty)
@@ -176,7 +204,7 @@ final class AndroidLayoutInflater {
             // out as a 4-column grid instead of one long column.
             let simple = AndroidLayoutInflater.simpleName(node.name).lowercased()
             let keyLike = kids.filter {
-                let k = AndroidLayoutInflater.kind(for: $0.name, hasChildren: !$0.children.isEmpty)
+                let k = kind(of: $0.name, hasChildren: !$0.children.isEmpty)
                 return k == .button || k == .image
             }.count
             if kids.count >= 8, keyLike * 10 >= kids.count * 8, !simple.contains("linearlayout"), !simple.contains("scrollview") {
@@ -225,7 +253,13 @@ final class AndroidLayoutInflater {
         }
         if let h = node.attr("hint"), let f = box.control as? UITextField { f.placeholder = string(h) }
         if let ts = node.attr("textSize"), ts.type == ResValue.typeDimension { box.setFontSize(ts.dimension) }
-        if let c = resolvedColor(node.attr("textColor")) { box.setTextColor(c) }
+        if var tc = node.attr("textColor") {
+            if tc.type == ResValue.typeReference, let res = apk.resources { tc = res.resolve(tc) }
+            if tc.isColor {
+                box.textARGB = UInt32(truncatingIfNeeded: tc.data)
+                box.setTextColor(AndroidLayoutInflater.color(tc.data))
+            }
+        }
         if let st = node.attr("textStyle"), st.data & 1 != 0 { box.setBold() }
         if let bg = resolvedColor(node.attr("background")) ?? resolvedColor(node.attr("backgroundTint")) {
             if box.kind == .button { box.control.backgroundColor = bg } else { box.view.backgroundColor = bg }

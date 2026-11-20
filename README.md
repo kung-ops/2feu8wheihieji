@@ -27,6 +27,27 @@ Made for an **iPhone 7 on iOS 15 or iOS 12**. It also runs on 1 GB iPhones
 - **Settings.** The virtual phone (Android 9, 1 GB RAM, memory per app) and
   the real iPhone (model, iOS version, RAM, memory in use), plus PC Link.
 
+## Android 9 parts from LineageOS 16.0
+- **Android's own resources are built in** (`Sources/Android/android9-res.zip`,
+  7.8 MB): the strings, colors, dimensions, styles, layouts and xhdpi icons of
+  Android 9's `framework-res.apk`, taken from a LineageOS 16.0 build. So
+  `@android:string/ok`, `android.R.layout.simple_list_item_1`,
+  `@android:color/white` and apps' styles built on `@android:style/…` work.
+  Layout `style="@style/…"` attributes are applied too (for example a button's
+  `android:onClick` set in a style).
+- **Two of LineageOS's own apps come preinstalled** (unmodified, Apache 2.0,
+  see `Sources/Android/Preinstalled/PreinstalledApps-NOTICE.txt` or
+  Settings › Open-source notices):
+  - **Calculator** (`com.android.calculator2`): Android 9's exact calculator
+    with its arbitrary-precision math (2^100−1 is exact), functions, degrees /
+    radians and the history it saves in SQLite.
+  - **Android Easter Egg** (the Android 9 octopus): an app-made `Drawable`
+    animated with `TimeAnimator` and spring physics. Drag it around.
+  If you remove one, Settings › Reinstall built-in apps brings it back.
+- The LineageOS ROM itself (a Galaxy S5 build) can't boot on an iPhone, and
+  its Clock and Calendar need Fragments, content providers and alarms, which
+  the sandbox doesn't have yet.
+
 ## Game features (ideas from Husk)
 - **Simple 2D games and drawing apps run.** Views that draw in
   `onDraw(Canvas)` (shapes, text, paths, bitmaps, transforms) are drawn with
@@ -59,10 +80,17 @@ parts can't come to APK Sandbox.
   `System.out` (in the log), Handler/postDelayed timers, several screens with
   `startActivity` and Intent extras, the Back key, Activity lifecycle
   (pause/stop/resume when you leave and come back).
-- Each app's own **private storage**: SharedPreferences, and files in
-  `getFilesDir()`/`getCacheDir()` via `java.io.File`, `FileOutputStream` and
-  `FileInputStream`. Apps can't touch files outside their folders and the
-  shared "sdcard".
+- Each app's own **private storage**: SharedPreferences, **SQLite databases**
+  (`SQLiteOpenHelper`, `SQLiteDatabase`, `Cursor`, `ContentValues`, on iOS's
+  own SQLite), and files in `getFilesDir()`/`getCacheDir()` via
+  `java.io.File`, `FileOutputStream`, `FileInputStream`, `DataOutputStream` /
+  `DataInputStream` and `ByteArrayOutput/InputStream`. Apps can't touch files
+  outside their folders and the shared "sdcard".
+- The manifest's `Application` class is created and its `onCreate` runs
+  before the first activity.
+- `BigInteger` (exact, any size), `Matrix`, `PathMeasure`, `TimeAnimator`,
+  `PropertyValuesHolder`, `OverScroller`, `ViewTreeObserver`, custom views'
+  `onMeasure`, and the support/AndroidX `SpringAnimation`.
 - `Build`, `Runtime.maxMemory()`, `ActivityManager.getMemoryInfo()` /
   `getMemoryClass()` / `isLowRamDevice()` describe the 1 GB virtual phone.
 
@@ -87,7 +115,8 @@ don't work:
 - **Native code** (`lib/*.so`): games, Unity/Flutter/React Native apps, most
   emulators.
 - OpenGL, SurfaceView game loops on their own thread, WebView,
-  RecyclerView, Fragments, Jetpack Compose UIs, Spinner.
+  RecyclerView, Fragments, Jetpack Compose UIs, Spinner, content providers
+  (`ContentResolver`), broadcast receivers, alarms and notifications.
 - Google Play services, networking, camera and sensors inside Android apps.
 
 Small apps work best: a hello-world, a counter, a to-do list, a calculator or a
@@ -120,8 +149,10 @@ The build is an unsigned `ApkSandbox.ipa` (and the same file as
 ## Code layout
 ```
 Sources/
-  Apk/   ZipArchive, BinaryXML (AXML), ResourceTable (resources.arsc), DexFile,
-         ApkPackage, PackageManager (install / update / uninstall / app data)
+  Apk/   ZipArchive, BinaryXML (AXML), ResourceTable (resources.arsc, styles),
+         FrameworkResources (Android 9 pack), DexFile, ApkPackage,
+         PackageManager (install / update / uninstall / app data / built-in apps)
+  Android/ android9-res.zip (Android 9 resources), Preinstalled/ (LineageOS apps)
   VM/    VM.swift (Dalvik interpreter), VirtualDevice (1 GB phone, heap budget),
          Framework*.swift (Android/Java library: views, lists, files, memory…),
          AndroidRuntime.swift (activities, lifecycle, views, Java strings)
@@ -145,6 +176,13 @@ $R Tools/TestApps/prebuilt/memtest.apk "tap:Fill memory"
 $R Tools/TestApps/prebuilt/tapgame.apk wait:500 touch:360,640
 $R backup com.kungops.counter saves.zip && $R restore com.kungops.counter saves.zip
 $R install Tools/TestApps/prebuilt/counter.apk && $R run com.kungops.counter
+$R Sources/Android/Preinstalled/LineageCalculator.apk tap:digit_7 tap:op_add tap:digit_5 expect:result=12
+$R Sources/Android/Preinstalled/LineageEasterEgg.apk wait:1500 svg:octopus.svg
+$R android-res 0x0104000a                  # Android 9's "OK"
+$R --lenient some.apk                      # list every API an APK still needs
 bash Tools/UIKitCheck/typecheck.sh
 ```
+Building the runner needs `libsqlite3-dev` (`apt install libsqlite3-dev`).
+`runner make-framework-pack framework-res.apk out.zip` rebuilds the Android 9
+pack from a ROM's `framework-res.apk`.
 `.github/workflows/linux-runner.yml` runs all of these.

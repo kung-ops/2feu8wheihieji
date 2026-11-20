@@ -40,12 +40,15 @@ extension Framework {
             return .void
         case "setTextColor":
             if p.first == "I" {
+                box.textARGB = UInt32(bitPattern: a[0].i)
                 let c = AndroidLayoutInflater.color(Int(UInt32(bitPattern: a[0].i)))
                 onMain { box.setTextColor(c) }
             }
             return .void
         case "setTextSize":
-            let size = CGFloat(p.count == 2 ? a[1].f : a[0].f)
+            // setTextSize(unit, size): COMPLEX_UNIT_PX (0) is in pixels, 2 per point here.
+            var size = CGFloat(p.count == 2 ? a[1].f : a[0].f)
+            if p.count == 2 && a[0].i == 0 { size /= Graphics.density }
             onMain { box.setFontSize(size) }
             return .void
         case "setHint":
@@ -231,7 +234,7 @@ extension Framework {
             box.touchListener = a[0].o
             if a[0].o != nil {
                 onMain {
-                    (box.view as? CanvasView)?.acceptsTouches = true
+                    box.canvasView?.acceptsTouches = true
                     box.view.isUserInteractionEnabled = true
                 }
             }
@@ -267,7 +270,21 @@ extension Framework {
             return .void
         case "clearAnimation":
             return .void
+        case "isLaidOut", "isAttachedToWindow": return B(true)
+        case "isInLayout", "isInEditMode", "isLayoutRequested", "isDirty": return B(false)
+        case "getTextSize":
+            let pt: CGFloat = onMain {
+                if let l = box.control as? UILabel { return l.font.pointSize }
+                if let b = box.control as? UIButton { return b.titleLabel?.font.pointSize ?? 15 }
+                if let f = box.control as? UITextField { return f.font?.pointSize ?? 15 }
+                return 15
+            }
+            return .val(.float(Float(pt * Graphics.density)))
+        case "getHighlightColor": return I(Int32(bitPattern: 0x6633b5e5))
+        case "getCurrentItem": return I(0)
         default:
+            if viewNoOps.contains(n) { return ref.ret == "V" ? .void : stubRet(vm, ref) }
+            if let r = try textViewExtra(vm, t, box, ref, a) { return r }
             return try listViewMethod(vm, t, box, ref, a)
         }
     }
@@ -304,8 +321,9 @@ extension Framework {
             return I(resColor(vm, a[0]))
         case "getResources":
             return O(vm.newObject("Landroid/content/res/Resources;", native: ResourcesBox()))
-        case "getApplicationContext", "getBaseContext", "getApplication", "getContext", "requireContext",
-             "requireActivity", "getActivity", "getLifecycle":
+        case "getApplicationContext", "getApplication":
+            return O(vm.application ?? t)
+        case "getBaseContext", "getContext", "requireContext", "requireActivity", "getActivity", "getLifecycle":
             return O(t)
         case "getIntent":
             if host.intent == nil { host.intent = vm.newObject("Landroid/content/Intent;", native: IntentBox()) }
@@ -349,11 +367,16 @@ extension Framework {
         case "requestPermissions", "recreate", "invalidateOptionsMenu", "supportInvalidateOptionsMenu":
             return .void
         case "getWindow":
-            return O(vm.newObject("Landroid/view/Window;"))
+            if host.window == nil { host.window = vm.newObject("Landroid/view/Window;", native: WindowBox(host: host)) }
+            return O(host.window)
         case "requestWindowFeature", "supportRequestWindowFeature":
             return B(true)
         case "getMainLooper":
             return O(vm.newObject("Landroid/os/Looper;"))
+        case "obtainStyledAttributes":
+            return O(vm.newObject("Landroid/content/res/TypedArray;", native: TypedArrayBox()))
+        case "setActionBar":
+            return .void
         case "setRequestedOrientation":
             let o = a[0].i
             host.requestedOrientation = o
@@ -363,7 +386,8 @@ extension Framework {
         case "getRequestedOrientation":
             return I(host.requestedOrientation)
         default:
-            return contextDir(vm, ref, a) ?? contextGraphics(vm, ref, a)
+            if let r = contextDir(vm, ref, a) ?? contextGraphics(vm, ref, a) { return r }
+            return try contextDatabase(vm, ref, a)
         }
     }
 }

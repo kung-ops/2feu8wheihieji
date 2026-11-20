@@ -30,6 +30,8 @@ final class ActivityHost {
     // VM-thread state
     var activity: JObject?
     var intent: JObject?
+    /// getWindow(): one Window object per activity.
+    var window: JObject?
     var viewObjects: [JObject] = []
     var rootBox: ViewBox?
     var finished = false
@@ -53,12 +55,26 @@ final class ActivityHost {
     }
 
     /// Main thread.
-    func setContent(_ v: UIView) {
+    func setContent(_ v: UIView) { setContent(v, fill: v is CanvasView) }
+
+    /// Makes the current content fill the screen (it turned out to be a
+    /// drawing, e.g. an ImageView showing an app Drawable).
+    func fillScreen() {
+        guard let r = root, scrollView.isScrollEnabled else { return }
+        setContent(r, fill: true)
+    }
+
+    /// Android window background (Window.setBackgroundDrawable…).
+    func setBackground(_ c: UIColor) {
+        scrollView.backgroundColor = c
+    }
+
+    func setContent(_ v: UIView, fill: Bool) {
         root?.removeFromSuperview()
         root = v
         v.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(v)
-        if v is CanvasView {
+        if fill {
             // A drawing view (a game) fills the screen and gets every touch.
             scrollView.isScrollEnabled = false
             NSLayoutConstraint.activate([

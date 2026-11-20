@@ -10,6 +10,7 @@ extension Framework {
         guard let o = v.o else { return 0 }
         switch o.native {
         case let d as DecimalBox: return d.value
+        case let b as BigIntegerBox: return Decimal(string: b.value.toString()) ?? 0
         case let b as Boxed:
             if b.kind == .long { return Decimal(b.value.j) }
             if b.kind == .double || b.kind == .float { return Decimal(string: Boxed.javaDouble(b.asDouble)) ?? 0 }
@@ -20,6 +21,10 @@ extension Framework {
     }
 
     static func newDecimal(_ vm: VM, _ d: Decimal, integer: Bool = false, scale: Int? = nil) -> JObject {
+        if integer {
+            // BigInteger is exact and unbounded (BigInt), not a 38-digit Decimal.
+            return newBigInteger(vm, BigInt(plainString(truncate(d))) ?? .zero)
+        }
         let box = DecimalBox(integer ? truncate(d) : d, integer: integer)
         let o = vm.newObject(integer ? "Ljava/math/BigInteger;" : "Ljava/math/BigDecimal;", native: box)
         if let s = scale { o.fields["__scale"] = .int(Int32(s)) }
@@ -74,6 +79,7 @@ extension Framework {
 
     static func moreStatic(_ vm: VM, _ ref: DexMethodRef, _ a: [Value]) throws -> Ret? {
         if let r = animationStatic(vm, ref, a) { return r }
+        if let r = bigIntegerStatic(vm, ref, a) { return r }
         let n = ref.name
         let p = ref.params
         switch ref.classDesc {
@@ -137,6 +143,7 @@ extension Framework {
 
     static func moreConstruct(_ vm: VM, _ t: JObject, _ ref: DexMethodRef, _ a: [Value]) throws -> Ret? {
         if let r = animationConstruct(t, ref) { return r }
+        if let r = try bigIntegerConstruct(vm, t, ref, a) { return r }
         let p = ref.params
         switch ref.classDesc {
         case "Ljava/math/BigDecimal;", "Ljava/math/BigInteger;":

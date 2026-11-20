@@ -55,6 +55,8 @@ indirect enum DrawOp {
     case scale(CGFloat, CGFloat)
     case rotate(CGFloat)
     case clip(CGRect)
+    /// Canvas.concat(Matrix): a, b, c, d, tx, ty (CGAffineTransform order).
+    case concat(CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat)
 
     /// Short description, for the Linux runner and logs.
     var summary: String {
@@ -68,7 +70,7 @@ indirect enum DrawOp {
         case .text(let s, _, _): return "text \"\(s)\""
         case .path: return "path"
         case .bitmap: return "bitmap"
-        case .save, .restore, .translate, .scale, .rotate, .clip: return "transform"
+        case .save, .restore, .translate, .scale, .rotate, .clip, .concat: return "transform"
         }
     }
 }
@@ -249,7 +251,7 @@ extension Framework {
 
     static func resourceBitmap(_ vm: VM, _ id: Int) -> JObject? {
         guard let p = vm.apk.resources?.filePath(id, preferBitmap: true), !p.hasSuffix(".xml"),
-              let bytes = vm.apk.zip.read(p) else { return nil }
+              let bytes = vm.apk.readFile(p) else { return nil }
         return decodeBitmap(vm, bytes: bytes)
     }
 
@@ -565,7 +567,16 @@ extension Framework {
             let r = CGRect(x: 0, y: 0, width: CGFloat(c.width), height: CGFloat(c.height))
             if let o = a.first?.o { setRect(o, r.minX, r.minY, r.maxX, r.maxY); return B(true) }
             return O(newRect(vm, r, float: false))
-        case "setBitmap", "setDensity", "setDrawFilter", "concat", "setMatrix", "drawFilter":
+        case "concat":
+            if let m = a.first?.o?.native as? MatrixBox, !m.m.isIdentity {
+                let t = m.m
+                c.add(.concat(t.a, t.b, t.c, t.d, t.tx, t.ty))
+            }
+            return .void
+        case "clipOutRect", "clipOutPath", "clipPath":
+            // Clipping away a region isn't recorded; drawing continues unclipped.
+            return B(true)
+        case "setBitmap", "setDensity", "setDrawFilter", "setMatrix", "drawFilter":
             return .void
         default:
             return nil
@@ -646,6 +657,29 @@ extension Framework {
                 setRect(r, 0, -s.textSize * 0.72, w, s.textSize * 0.02)
             }
             return .void
+        case "getTextWidths":
+            // getTextWidths(String, float[]) / (String, int, int, float[]) / (char[], int, int, float[])
+            var text = ""
+            if ref.params.first == "[C" {
+                let u = (a[0].o?.native as? JArray)?.utf16 ?? []
+                text = String(decoding: u.dropFirst(Int(max(0, a[1].i))).prefix(Int(max(0, a[2].i))), as: UTF16.self)
+            } else {
+                text = try vm.stringOf(a[0].o)
+                if ref.params.count == 4 {
+                    let u = Array(text.utf16)
+                    let b = max(0, min(Int(a[1].i), u.count)), e = max(b, min(Int(a[2].i), u.count))
+                    text = String(decoding: u[b..<e], as: UTF16.self)
+                }
+            }
+            guard let out = a.last?.o?.native as? JArray else { throw vm.npe("getTextWidths") }
+            var k = 0
+            for ch in text {
+                let w = Float(Graphics.textWidth(String(ch), size: s.textSize, bold: s.bold))
+                let units = String(ch).utf16.count
+                for j in 0..<units where k + j < out.count { out[k + j] = .float(j == 0 ? w : 0) }
+                k += units
+            }
+            return I(Int32(text.utf16.count))
         case "ascent": return .val(.float(Float(-s.textSize * 0.93)))
         case "descent": return .val(.float(Float(s.textSize * 0.24)))
         case "getFontSpacing": return .val(.float(Float(s.textSize * 1.17)))
@@ -986,21 +1020,25 @@ extension VM {
 
     /// Runs the view's draw(Canvas) / onDraw(Canvas) and shows the result.
     func drawCanvas(_ box: ViewBox) throws {
-        guard box.isCanvas, let o = box.jobj, o.cls.isApp, box.pxWidth > 0, box.pxHeight > 0 else { return }
+        guard box.isCanvas, let o = box.jobj, o.cls.isApp || box.drawable != nil, box.pxWidth > 0, box.pxHeight > 0 else { return }
         let cb = CanvasBox(width: box.pxWidth, height: box.pxHeight)
         let canvas = newObject("Landroid/graphics/Canvas;", native: cb)
         let params = ["Landroid/graphics/Canvas;"]
-        if findVirtual(o.cls, "draw(Landroid/graphics/Canvas;)V") != nil {
+        if let d = box.drawable {
+            // ImageView with an app Drawable: it fills the view (no intrinsic size).
+            try Framework.fitDrawable(self, d, width: box.pxWidth, height: box.pxHeight)
+            try call(d, "draw", params: params, args: [.obj(canvas)])
+        } else if findVirtual(o.cls, "draw(Landroid/graphics/Canvas;)V") != nil {
             try call(o, "draw", params: params, args: [.obj(canvas)])
         } else {
             try call(o, "onDraw", params: params, args: [.obj(canvas)])
         }
-        if findVirtual(o.cls, "dispatchDraw(Landroid/graphics/Canvas;)V") != nil {
+        if box.drawable == nil, findVirtual(o.cls, "dispatchDraw(Landroid/graphics/Canvas;)V") != nil {
             try call(o, "dispatchDraw", params: params, args: [.obj(canvas)])
         }
         framesDrawn += 1
         let ops = cb.ops
-        DispatchQueue.main.async { (box.view as? CanvasView)?.show(ops) }
+        DispatchQueue.main.async { box.canvasView?.show(ops) }
     }
 
     /// A touch on a drawing view: OnTouchListener first, then onTouchEvent.

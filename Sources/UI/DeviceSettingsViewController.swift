@@ -65,6 +65,10 @@ final class DeviceSettingsViewController: UITableViewController {
                 .action("Stop all apps", { [weak self] in
                     for pkg in Array(TaskManager.shared.sessions.keys) { TaskManager.shared.stop(pkg) }
                     self?.build()
+                })
+            ] + builtInRow() + [
+                .action("Open-source notices", { [weak self] in
+                    self?.navigationController?.pushViewController(NoticesViewController(), animated: true)
                 }),
                 .action("PC Link (audio, camera, microphone)", { [weak self] in
                     self?.navigationController?.pushViewController(PCLinkViewController(), animated: true)
@@ -75,13 +79,36 @@ final class DeviceSettingsViewController: UITableViewController {
                 .text("""
                 APK Sandbox runs Android apps' Java/Kotlin bytecode (classes.dex) with a built-in Dalvik interpreter and draws their layouts with native iOS views.
 
-                Works best with simple apps: text, buttons, text fields, checkboxes, timers, Toasts, dialogs, several screens, SharedPreferences and files.
+                Works best with simple apps: text, buttons, text fields, checkboxes, lists, timers, Toasts, dialogs, several screens, Canvas drawing, SharedPreferences, SQLite databases and files. Android 9's own resources (from LineageOS 16.0) are built in.
 
-                Not supported: native code (.so), games/OpenGL, WebView, lists (RecyclerView/ListView), Fragments, Jetpack Compose, Google Play services, networking.
+                Comes with LineageOS's Calculator and Android Easter Egg.
+
+                Not supported: native code (.so), OpenGL, WebView, RecyclerView, Fragments, Jetpack Compose, Google Play services, networking.
                 """)
             ], nil)
         ]
         tableView.reloadData()
+    }
+
+    /// "Reinstall Calculator, Android Easter Egg" when a built-in app was removed.
+    private func builtInRow() -> [Row] {
+        let missing = PackageManager.shared.pendingBuiltInApps(includingRemoved: true)
+        guard !missing.isEmpty else { return [] }
+        let names = missing.map { $0.package == "com.android.egg" ? "Android Easter Egg" : "Calculator" }
+        return [.action("Reinstall built-in apps (\(names.joined(separator: ", ")))", { [weak self] in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let done = PackageManager.shared.installBuiltInApps(includingRemoved: true)
+                DispatchQueue.main.async {
+                    PackageManager.shared.reload()
+                    NotificationCenter.default.post(name: TaskManager.changed, object: nil)
+                    self?.build()
+                    let a = UIAlertController(title: done.isEmpty ? "Nothing installed" : "Installed",
+                                              message: done.joined(separator: ", "), preferredStyle: .alert)
+                    a.addAction(UIAlertAction(title: "OK", style: .default))
+                    self?.present(a, animated: true)
+                }
+            }
+        })]
     }
 
     override func numberOfSections(in tableView: UITableView) -> Int { return sections.count }
@@ -127,5 +154,32 @@ final class DeviceSettingsViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         if case .action(_, let run) = sections[indexPath.section].rows[indexPath.row] { run() }
+    }
+}
+
+/// The licenses of what APK Sandbox ships from Android / LineageOS.
+final class NoticesViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Open-source notices"
+        view.backgroundColor = .white
+        let tv = UITextView()
+        tv.isEditable = false
+        tv.font = .systemFont(ofSize: 13)
+        tv.translatesAutoresizingMaskIntoConstraints = false
+        var text = ""
+        if let u = Bundle.main.url(forResource: "PreinstalledApps-NOTICE", withExtension: "txt"),
+           let s = try? String(contentsOf: u, encoding: .utf8) { text += s + "\n\n" }
+        if let pack = FrameworkResources.shared, let n = pack.read("@android/NOTICE.txt") {
+            text += String(decoding: n, as: UTF8.self)
+        }
+        tv.text = text.isEmpty ? "No notices found." : text
+        view.addSubview(tv)
+        NSLayoutConstraint.activate([
+            tv.topAnchor.constraint(equalTo: view.topAnchor),
+            tv.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            tv.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
+            tv.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8)
+        ])
     }
 }

@@ -74,6 +74,14 @@ final class VM {
     lazy var storage = AppStorage(packageName: apk.packageName)
 
     var steps = 0
+    /// The app's android.app.Application (from the manifest), created before
+    /// the first activity, and the hidden context it uses.
+    var application: JObject?
+    var applicationHost: ActivityHost?
+    var applicationStarted = false
+    /// Per-frame callbacks (TimeAnimator, springs) and whether a frame is queued.
+    var tickers: [FrameTicker] = []
+    var tickScheduled = false
     var stepLimit = 40_000_000
     /// Distinguish interpreted APK methods from Android API compatibility fallbacks.
     var interpretedMethodCount = 0

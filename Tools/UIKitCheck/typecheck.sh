@@ -2,7 +2,7 @@
 # Type-checks every Swift file of the iOS app on Linux against a
 # declarations-only UIKit (UIKit.swift here), so mistakes in the screens are
 # caught without a Mac. Codemagic still does the real iOS build.
-#   Tools/UIKitCheck/typecheck.sh      (needs swiftc 5.10 on PATH)
+#   Tools/UIKitCheck/typecheck.sh      (needs swiftc 5.10 and libsqlite3-dev)
 set -euo pipefail
 H="$(cd "$(dirname "$0")" && pwd)"
 SRC="$H/../../Sources"
@@ -22,5 +22,5 @@ import UIKit
 func autoreleasepool<T>(invoking body: () throws -> T) rethrows -> T { return try body() }
 final class PCLinkViewController: UIViewController {}
 SHIM
-swiftc -typecheck -continue-building-after-errors -parse-as-library -I "$W/mod" -I "$H/../LinuxRunner/CZlib" "$W"/src/*.swift
+swiftc -typecheck -continue-building-after-errors -parse-as-library -I "$W/mod" -I "$H/../LinuxRunner/CZlib" -I "$H/../LinuxRunner/CSQLite" "$W"/src/*.swift
 echo "TYPECHECK OK"

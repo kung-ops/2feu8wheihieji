@@ -39,6 +39,8 @@ final class AXMLNode {
     var attrs: [(name: String, value: ResValue)] = []
     var children: [AXMLNode] = []
     weak var parent: AXMLNode?
+    /// The style="@style/…" items have been added to attrs.
+    var styleMerged = false
 
     init(name: String) { self.name = name }
 
