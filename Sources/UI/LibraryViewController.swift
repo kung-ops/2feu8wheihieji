@@ -13,7 +13,10 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
         super.viewDidLoad()
         title = "APK Sandbox"
         navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(pick))
-        navigationItem.leftBarButtonItem = UIBarButtonItem(title: "About", style: .plain, target: self, action: #selector(about))
+        navigationItem.leftBarButtonItems = [
+            UIBarButtonItem(title: "About", style: .plain, target: self, action: #selector(about)),
+            UIBarButtonItem(title: "PC Link", style: .plain, target: self, action: #selector(openPCLink))
+        ]
         tableView.rowHeight = 64
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "c")
 
@@ -55,6 +58,10 @@ final class LibraryViewController: UITableViewController, UIDocumentPickerDelega
         picker.delegate = self
         picker.allowsMultipleSelection = false
         present(picker, animated: true)
+    }
+
+    @objc private func openPCLink() {
+        navigationController?.pushViewController(PCLinkViewController(), animated: true)
     }
 
     @objc private func about() {
