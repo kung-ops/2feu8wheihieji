@@ -42,6 +42,30 @@ jobs:
           grep -q 'label #id/count "3 tasks"' todo.txt
           grep -q 'Toast: Done: Buy milk (row 0)' todo.txt
           grep -q 'label #id/count "2 tasks"' todo.txt
+      - name: Run the Tap Ball game (Canvas drawing, animation, touches)
+        shell: bash
+        run: |
+          Tools/LinuxRunner/build/runner Tools/TestApps/prebuilt/tapgame.apk wait:500 touch:10,10 | tee game.txt
+          grep -q 'canvas 720x1280 px' game.txt
+          grep -q 'text "Score: 0  Missed: 1"' game.txt
+          frames=$(grep -o 'frames drawn=[0-9]*' game.txt | cut -d= -f2)
+          test "$frames" -gt 10
+      - name: Install an XAPK bundle, back up and restore its saves
+        shell: bash
+        run: |
+          R=Tools/LinuxRunner/build/runner
+          mkdir -p bundle && cp Tools/TestApps/prebuilt/counter.apk bundle/com.kungops.counter.apk
+          cp Tools/TestApps/prebuilt/memtest.apk bundle/config.xxhdpi.apk
+          echo '{"package_name":"com.kungops.counter"}' > bundle/manifest.json
+          (cd bundle && zip -q ../counter.xapk *)
+          $R install counter.xapk
+          $R run com.kungops.counter tap:open | grep -q 'file=hello file'
+          $R backup com.kungops.counter saves.zip
+          unzip -l saves.zip | grep -q 'data/files/note.txt'
+          $R clear com.kungops.counter
+          $R restore com.kungops.counter saves.zip
+          test "$(cat ~/.local/share/VirtualAndroid/data/com.kungops.counter/files/note.txt | head -c 10)" = "hello file"
+          $R uninstall com.kungops.counter
       - name: Memory limit gives OutOfMemoryError, not a crash
         shell: bash
         run: |

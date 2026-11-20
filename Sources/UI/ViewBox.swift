@@ -36,6 +36,15 @@ final class ViewBox: NSObject {
     var emptyView: ViewBox?
     /// Row index when this view is a row of a list, else -1.
     var listPosition = -1
+    /// A view that shows what the app draws (CanvasView).
+    var isCanvas = false
+    var touchListener: JObject?
+    var pxWidth: Int32 = 0
+    var pxHeight: Int32 = 0
+    var touchDownTime: Int64 = 0
+    /// Main thread → VM: a touch (action, x, y in points) / the view's size (points).
+    var touchHandler: ((ViewBox, Int32, CGFloat, CGFloat) -> Void)?
+    var sizeHandler: ((ViewBox, CGFloat, CGFloat) -> Void)?
     /// Cursor / selection (UTF-16 offsets); -1 means "end of text".
     var selStart: Int = -1
     var selEnd: Int = -1
@@ -51,6 +60,10 @@ final class ViewBox: NSObject {
         self.view = view
         self.control = control
         super.init()
+        if let cv = view as? CanvasView {
+            cv.box = self
+            isCanvas = true
+        }
         #if canImport(ObjectiveC)
         switch kind {
         case .button:

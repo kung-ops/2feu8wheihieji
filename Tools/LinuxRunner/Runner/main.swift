@@ -28,6 +28,10 @@ func dump(_ b: ViewBox, _ indent: String = "") -> String {
     if b.clickListener != nil { line += " [onClick:" + (b.clickListener?.cls.javaName ?? "") + "]" }
     if b.onClickAttr != nil { line += " [android:onClick=" + (b.onClickAttr ?? "") + "]" }
     if let o = b.jobj, o.cls.isApp { line += " <" + o.cls.javaName + ">" }
+    if let cv = b.view as? CanvasView, !cv.ops.isEmpty {
+        let texts = cv.ops.filter { if case .text = $0 { return true }; return false }.map { $0.summary }
+        line += " [canvas \(b.pxWidth)x\(b.pxHeight) px, \(cv.ops.count) ops: \(Set(cv.ops.map { $0.summary.split(separator: " ").first.map(String.init) ?? "" }).sorted().joined(separator: ","))\(texts.isEmpty ? "" : "; " + texts.joined(separator: "; "))]"
+    }
     var out = line + "\n"
     for c in b.children { out += dump(c, indent + "  ") }
     return out
@@ -36,6 +40,21 @@ func dump(_ b: ViewBox, _ indent: String = "") -> String {
 func findBox(_ b: ViewBox, _ text: String) -> ViewBox? {
     if b.text == text || (b.id != -1 && ("0x" + String(b.id, radix: 16) == text || apk.resources?.name(b.id) == "id/" + text)) { return b }
     for c in b.children { if let f = findBox(c, text) { return f } }
+    return nil
+}
+
+/// Gives every drawing view a phone-sized frame (360 x 640 pt), like UIKit layout would.
+func layoutCanvases(_ b: ViewBox) {
+    if b.isCanvas, let o = b.jobj, o.cls.isApp {
+        b.view.bounds = CGRect(x: 0, y: 0, width: 360, height: 640)
+        b.sizeHandler?(b, 360, 640)
+    }
+    for c in b.children { layoutCanvases(c) }
+}
+
+func firstTouchable(_ b: ViewBox) -> ViewBox? {
+    if b.isCanvas, b.touchHandler != nil, (b.view as? CanvasView)?.acceptsTouches == true { return b }
+    for c in b.children { if let f = firstTouchable(c) { return f } }
     return nil
 }
 
@@ -51,6 +70,7 @@ guard args.count > 1 else {
            runner install <apk>            install into the virtual Android
            runner run <package> [tap:...]  run an installed app (memory-mapped dex)
            runner list | uninstall <package> | clear <package>
+           runner backup <package> <out.zip> | restore <package> <backup.zip>
     """)
     exit(2)
 }
@@ -63,6 +83,18 @@ case "install":
     print("✓ installed \(info.packageName) \(info.versionName) (\(info.versionCode)) icon=\(info.hasIcon) dex=\(info.dexCount)")
     let oat = (try? FileManager.default.contentsOfDirectory(atPath: pm.oatDir(info.packageName).path)) ?? []
     print("  oat: \(oat.sorted())")
+    exit(0)
+case "backup":
+    guard args.count > 3, let app = pm.app(args[2]) else { print("✖ usage: backup <package> <out.zip>"); exit(2) }
+    let tmp = try pm.backup(app.packageName, label: app.label)
+    try? FileManager.default.removeItem(atPath: args[3])
+    try FileManager.default.moveItem(at: tmp, to: URL(fileURLWithPath: args[3]))
+    print("✓ backed up \(app.packageName) to \(args[3])")
+    exit(0)
+case "restore":
+    guard args.count > 3 else { print("✖ usage: restore <package> <backup.zip>"); exit(2) }
+    try pm.restore(args[2], from: URL(fileURLWithPath: args[3]))
+    print("✓ restored \(args[2])")
     exit(0)
 case "list":
     for a in pm.apps { print("\(a.packageName)\t\(a.label)\t\(a.versionName)") }
@@ -114,6 +146,10 @@ if !host.errors.isEmpty || vm.interpretedMethodCount == 0 {
     exit(4)
 }
 print("✓ DEX methods executed: \(vm.interpretedMethodCount); compatibility no-ops: \(vm.stubCallCount)")
+if let root = host.stack.last?.rootBox {
+    layoutCanvases(root)
+    pump(0.5)
+}
 
 func screen() {
     guard let top = host.stack.last else { print("(no activity)"); return }
@@ -135,11 +171,20 @@ for a in args.dropFirst(2) {
         }
         pump(1)
         screen()
+    } else if a.hasPrefix("touch:") {
+        // touch:x,y in Android pixels: a finger down and up there.
+        let xy = a.dropFirst(6).split(separator: ",").compactMap { Double($0) }
+        guard xy.count == 2, let root = host.stack.last?.rootBox, let b = firstTouchable(root) else { print("❓ nothing takes touches"); continue }
+        print("👆 touch \(Int(xy[0])),\(Int(xy[1]))")
+        b.touchHandler?(b, 0, CGFloat(xy[0]) / 2, CGFloat(xy[1]) / 2)
+        b.touchHandler?(b, 1, CGFloat(xy[0]) / 2, CGFloat(xy[1]) / 2)
+        pump(0.3)
+        screen()
     } else if a.hasPrefix("wait:") {
         pump((Double(a.dropFirst(5)) ?? 1000) / 1000)
     }
 }
-print(String(format: "⏱  total %.2fs, steps=%d", Date().timeIntervalSince(t0), vm.steps))
+print(String(format: "⏱  total %.2fs, steps=%d, frames drawn=%d", Date().timeIntervalSince(t0), vm.steps, vm.framesDrawn))
 let heapBefore = HeapBudget.shared.usedBytes
 vm.shutdown()
 pump(0.5)

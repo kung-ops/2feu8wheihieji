@@ -2,7 +2,7 @@ import UIKit
 
 /// Android's "App info" for an installed app: open, force stop, uninstall,
 /// storage (clear storage / cache), details and permissions.
-final class AppInfoViewController: UITableViewController {
+final class AppInfoViewController: UITableViewController, UIDocumentPickerDelegate {
 
     private let packageName: String
     private var app: InstalledApp?
@@ -12,7 +12,9 @@ final class AppInfoViewController: UITableViewController {
         case info(String, String)
         case action(String, destructive: Bool, () -> Void)
         case text(String)
+        case toggle(String, Bool, (Bool) -> Void)
     }
+    private var toggleHandlers: [(Bool) -> Void] = []
     private var sections: [(title: String, rows: [Row], footer: String?)] = []
 
     init(packageName: String) {
@@ -58,7 +60,33 @@ final class AppInfoViewController: UITableViewController {
 
     private func build(_ app: InstalledApp) {
         let running = TaskManager.shared.isRunning(app.packageName)
+        let pm = PackageManager.shared
+        let st = pm.settings(app.packageName)
         var s: [(String, [Row], String?)] = []
+
+        // Husk-style game settings.
+        let screenNames = ["As the app asks" + (app.prefersLandscape ? " (landscape)" : ""), "Portrait", "Landscape"]
+        s.append(("Game settings", [
+            .action("Name: " + pm.displayName(app), destructive: false, { [weak self] in self?.rename() }),
+            .action("Screen: " + screenNames[max(0, min(2, st.orientation ?? 0))], destructive: false, { [weak self] in self?.chooseOrientation() }),
+            .toggle("Full screen", st.fullScreen ?? false, { [weak self] on in self?.update { $0.fullScreen = on } }),
+            .toggle("Keep the screen on", st.keepScreenOn ?? false, { [weak self] on in self?.update { $0.keepScreenOn = on } })
+        ], "Full screen hides the app bar and the ◁ ○ □ keys. Tap with three fingers to show them. Changes apply the next time the app opens."))
+
+        var saves: [Row] = []
+        if let secs = st.playSeconds, secs > 0 {
+            let mins = Int(secs / 60)
+            var played = mins < 1 ? "under a minute" : (mins < 60 ? "\(mins) min" : String(format: "%.1f h", secs / 3600))
+            if let n = st.launches { played += " · \(n) time\(n == 1 ? "" : "s")" }
+            saves.append(.info("Played", played))
+        }
+        if let last = st.lastPlayed { saves.append(.info("Last played", Theme.date(last))) }
+        saves.append(.action("Back Up Saves…", destructive: false, { [weak self] in self?.backUpSaves() }))
+        saves.append(.action("Restore Saves…", destructive: false, { [weak self] in self?.pickBackup() }))
+        if pm.lastRunLog(app.packageName) != nil {
+            saves.append(.action("Last run log", destructive: false, { [weak self] in self?.showLastLog() }))
+        }
+        s.append(("Saves", saves, "A backup is a .zip of everything the app saved here, to keep in Files or move to another iPhone."))
 
         var storage: [Row] = []
         if let z = sizes {
@@ -105,8 +133,115 @@ final class AppInfoViewController: UITableViewController {
             .action("View AndroidManifest.xml", destructive: false, { [weak self] in self?.showManifest() }),
             .action("Share APK…", destructive: false, { [weak self] in self?.shareApk() })
         ], nil))
+        if let n = app.skippedSplits, n > 0 {
+            s.append(("App bundle", [.text("Installed from a bundle: \(n) extra part(s) for other screens, languages or native code were left out.")], nil))
+        }
         sections = s.map { (title: $0.0, rows: $0.1, footer: $0.2) }
+        toggleHandlers = []
         tableView.reloadData()
+    }
+
+    // MARK: - Game settings
+
+    private func update(_ change: (inout AppSettings) -> Void) {
+        var st = PackageManager.shared.settings(packageName)
+        change(&st)
+        PackageManager.shared.saveSettings(st, for: packageName)
+        if let app = app { build(app) }
+    }
+
+    private func rename() {
+        guard let app = app else { return }
+        let a = UIAlertController(title: "Name", message: "What the app is called on the home screen. The app itself is not changed.", preferredStyle: .alert)
+        a.addTextField { tf in
+            tf.text = PackageManager.shared.displayName(app)
+            tf.placeholder = app.label
+            tf.clearButtonMode = .whileEditing
+        }
+        a.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        a.addAction(UIAlertAction(title: "Reset", style: .default) { [weak self] _ in self?.update { $0.displayName = nil } })
+        a.addAction(UIAlertAction(title: "Save", style: .default) { [weak self] _ in
+            let name = (a.textFields?.first?.text ?? "").trimmingCharacters(in: .whitespaces)
+            self?.update { $0.displayName = name.isEmpty ? nil : name }
+        })
+        present(a, animated: true)
+    }
+
+    private func chooseOrientation() {
+        let sheet = UIAlertController(title: "Screen", message: nil, preferredStyle: .actionSheet)
+        for (i, name) in ["As the app asks", "Portrait", "Landscape"].enumerated() {
+            sheet.addAction(UIAlertAction(title: name, style: .default) { [weak self] _ in self?.update { $0.orientation = i == 0 ? nil : i } })
+        }
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        anchor(sheet, to: tableView)
+        present(sheet, animated: true)
+    }
+
+    @objc private func switchChanged(_ sw: UISwitch) {
+        guard sw.tag >= 0, sw.tag < toggleHandlers.count else { return }
+        toggleHandlers[sw.tag](sw.isOn)
+    }
+
+    // MARK: - Saves
+
+    private func backUpSaves() {
+        guard let app = app else { return }
+        do {
+            let zip = try PackageManager.shared.backup(app.packageName, label: PackageManager.shared.displayName(app))
+            let share = UIActivityViewController(activityItems: [zip], applicationActivities: nil)
+            if let pop = share.popoverPresentationController {
+                pop.sourceView = view
+                pop.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
+            }
+            present(share, animated: true)
+        } catch {
+            showMessage("Couldn't back up", error.localizedDescription)
+        }
+    }
+
+    private func pickBackup() {
+        let picker = UIDocumentPickerViewController(documentTypes: ["public.zip-archive"], in: .import)
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        guard let url = urls.first else { return }
+        confirmRestore(url)
+    }
+
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentAt url: URL) {
+        confirmRestore(url)
+    }
+
+    private func confirmRestore(_ url: URL) {
+        let name = app.map { PackageManager.shared.displayName($0) } ?? packageName
+        let a = UIAlertController(title: "Replace \(name)'s saves?",
+                                  message: "What the app has saved now is replaced by the backup. Back up first if you want to keep it.",
+                                  preferredStyle: .alert)
+        a.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        a.addAction(UIAlertAction(title: "Replace", style: .destructive) { [weak self] _ in
+            guard let self = self else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            TaskManager.shared.stop(self.packageName)
+            do {
+                try PackageManager.shared.restore(self.packageName, from: url)
+                self.sizes = nil
+                self.refresh()
+                self.showMessage("Saves restored", nil)
+            } catch {
+                self.showMessage("Couldn't restore", error.localizedDescription)
+            }
+        })
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.present(a, animated: true) }
+    }
+
+    private func showLastLog() {
+        guard let text = PackageManager.shared.lastRunLog(packageName) else { return }
+        let vc = TextViewController(title: "Last run", text: text)
+        vc.shareURL = PackageManager.shared.lastRunLogURL(packageName)
+        navigationController?.pushViewController(vc, animated: true)
     }
 
     private func header(_ app: InstalledApp) -> UIView {
@@ -271,6 +406,18 @@ final class AppInfoViewController: UITableViewController {
             c.textLabel?.font = .systemFont(ofSize: 14)
             c.selectionStyle = .none
             return c
+        case .toggle(let t, let on, let handler):
+            let c = UITableViewCell(style: .default, reuseIdentifier: nil)
+            c.textLabel?.text = t
+            c.selectionStyle = .none
+            let sw = UISwitch()
+            sw.isOn = on
+            sw.onTintColor = Theme.accent
+            sw.tag = toggleHandlers.count
+            toggleHandlers.append(handler)
+            sw.addTarget(self, action: #selector(switchChanged(_:)), for: .valueChanged)
+            c.accessoryView = sw
+            return c
         }
     }
 
@@ -284,6 +431,8 @@ final class AppInfoViewController: UITableViewController {
 final class TextViewController: UIViewController {
     private let textView = UITextView()
     private var text: String
+    /// When set, a Share button shares this file.
+    var shareURL: URL?
 
     init(title: String, text: String) {
         self.text = text
@@ -300,6 +449,20 @@ final class TextViewController: UIViewController {
         textView.textColor = .black
         textView.text = text
         view = textView
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        if shareURL != nil {
+            navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .action, target: self, action: #selector(share))
+        }
+    }
+
+    @objc private func share() {
+        guard let url = shareURL else { return }
+        let vc = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        if let pop = vc.popoverPresentationController { pop.barButtonItem = navigationItem.rightBarButtonItem }
+        present(vc, animated: true)
     }
 
     func setText(_ t: String) {

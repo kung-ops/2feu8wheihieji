@@ -28,7 +28,7 @@ extension VM {
             views.append(b)
             push(b.jobj)
             push(b.clickListener); push(b.checkedListener); push(b.seekListener)
-            push(b.itemClickListener); push(b.itemLongClickListener); push(b.adapter)
+            push(b.itemClickListener); push(b.itemLongClickListener); push(b.adapter); push(b.touchListener)
             push(b.tag)
             for c in b.children { view(c) }
             view(b.emptyView)
@@ -97,6 +97,7 @@ extension VM {
         activityStack.removeAll()
         orphanViews.removeAll()
         listViews.removeAll()
+        dirtyCanvases.removeAll()
         internedStrings.removeAll()
         runnableGeneration.removeAll()
         DispatchQueue.main.async {
@@ -104,6 +105,7 @@ extension VM {
                 b.handler = nil
                 b.clickListener = nil; b.checkedListener = nil; b.seekListener = nil
                 b.itemClickListener = nil; b.itemLongClickListener = nil; b.adapter = nil
+                b.touchListener = nil; b.touchHandler = nil; b.sizeHandler = nil
                 b.emptyView = nil
                 b.tag = .null
             }

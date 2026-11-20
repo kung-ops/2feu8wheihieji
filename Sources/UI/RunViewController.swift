@@ -26,6 +26,17 @@ final class RunViewController: UIViewController, RunHost {
     private var pendingAlerts: [UIAlertController] = []
     private var lastMemoryWarning = Date.distantPast
 
+    // Husk-style game settings (installed apps).
+    private var settings = AppSettings()
+    private var manifestLandscape = false
+    /// Orientation the app asked for at run time (Android constant), -1 none.
+    private var requested: Int32 = -1
+    private var chromeHidden = false
+    private var shownSince: Date?
+    private var playSeconds: Double = 0
+    private var barConstraints: [NSLayoutConstraint] = []
+    private var fullConstraints: [NSLayoutConstraint] = []
+
     /// Called once when the app has ended (closed, crashed and closed, killed).
     var onEnd: ((RunViewController) -> Void)?
     /// Called when the user pressed Home and the app keeps running.
@@ -36,6 +47,83 @@ final class RunViewController: UIViewController, RunHost {
         self.packageName = packageName
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .fullScreen
+        if let pkg = packageName {
+            settings = PackageManager.shared.settings(pkg)
+            manifestLandscape = PackageManager.shared.app(pkg)?.prefersLandscape ?? false
+        } else {
+            manifestLandscape = [0, 6, 8, 11].contains(apk.launcherOrientation)
+        }
+    }
+
+    // MARK: - Orientation & full screen
+
+    private var wantsLandscape: Bool {
+        switch settings.orientation ?? 0 {
+        case 1: return false
+        case 2: return true
+        default:
+            if requested >= 0 { return [0, 6, 8, 11].contains(Int(requested)) }
+            return manifestLandscape
+        }
+    }
+
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+        return wantsLandscape ? .landscape : .portrait
+    }
+
+    override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation {
+        return wantsLandscape ? .landscapeRight : .portrait
+    }
+
+    override var shouldAutorotate: Bool { return true }
+
+    override var prefersStatusBarHidden: Bool { return chromeHidden }
+
+    override var prefersHomeIndicatorAutoHidden: Bool { return chromeHidden }
+
+    /// Activity.setRequestedOrientation from the app.
+    func requestOrientation(_ androidOrientation: Int32) {
+        requested = androidOrientation
+        guard settings.orientation ?? 0 == 0 else { return }
+        rotateToPreferred()
+    }
+
+    private func rotateToPreferred() {
+        // iOS 12–15: ask UIKit to re-read supportedInterfaceOrientations, and
+        // turn the screen if the app needs the other orientation.
+        let target: UIInterfaceOrientation = wantsLandscape ? .landscapeRight : .portrait
+        UIDevice.current.setValue(target.rawValue, forKey: "orientation")
+        UIViewController.attemptRotationToDeviceOrientation()
+    }
+
+    /// Full screen hides the app bar and the ◁ ○ □ bar; three fingers bring them back.
+    private func setChrome(hidden: Bool, animated: Bool) {
+        chromeHidden = hidden
+        appBar.isHidden = hidden
+        navBar.isHidden = hidden
+        if hidden {
+            NSLayoutConstraint.deactivate(barConstraints)
+            NSLayoutConstraint.activate(fullConstraints)
+        } else {
+            NSLayoutConstraint.deactivate(fullConstraints)
+            NSLayoutConstraint.activate(barConstraints)
+        }
+        setNeedsStatusBarAppearanceUpdate()
+        if animated {
+            UIView.animate(withDuration: 0.2) { self.view.layoutIfNeeded() }
+        }
+    }
+
+    @objc private func threeFingerTap() {
+        guard settings.fullScreen ?? false else { return }
+        setChrome(hidden: !chromeHidden, animated: true)
+        if !chromeHidden {
+            // Hide again after a few seconds, like Android's immersive mode.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                guard let self = self, !self.closed, self.settings.fullScreen ?? false, !self.chromeHidden else { return }
+                self.setChrome(hidden: true, animated: true)
+            }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -90,6 +178,15 @@ final class RunViewController: UIViewController, RunHost {
 
         let guide = view.safeAreaLayoutGuide
         consoleHeight = console.heightAnchor.constraint(equalToConstant: 0)
+        barConstraints = [
+            screen.topAnchor.constraint(equalTo: appBar.bottomAnchor),
+            console.bottomAnchor.constraint(equalTo: navBar.topAnchor)
+        ]
+        fullConstraints = [
+            screen.topAnchor.constraint(equalTo: view.topAnchor),
+            console.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ]
+        NSLayoutConstraint.activate(barConstraints)
         NSLayoutConstraint.activate([
             appBar.topAnchor.constraint(equalTo: view.topAnchor),
             appBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -103,14 +200,12 @@ final class RunViewController: UIViewController, RunHost {
             more.widthAnchor.constraint(equalToConstant: 44),
             more.heightAnchor.constraint(equalToConstant: 44),
 
-            screen.topAnchor.constraint(equalTo: appBar.bottomAnchor),
             screen.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             screen.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             screen.bottomAnchor.constraint(equalTo: console.topAnchor),
 
             console.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             console.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            console.bottomAnchor.constraint(equalTo: navBar.topAnchor),
             consoleHeight,
 
             navBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -129,12 +224,26 @@ final class RunViewController: UIViewController, RunHost {
             bottomFill.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomFill.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+        let three = UITapGestureRecognizer(target: self, action: #selector(threeFingerTap))
+        three.numberOfTouchesRequired = 3
+        three.cancelsTouchesInView = false
+        view.addGestureRecognizer(three)
+        if settings.fullScreen ?? false { setChrome(hidden: true, animated: false) }
 
         start()
     }
 
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        UIApplication.shared.isIdleTimerDisabled = false
+        if let s = shownSince { playSeconds += Date().timeIntervalSince(s) }
+        shownSince = nil
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        shownSince = Date()
+        if settings.keepScreenOn ?? false { UIApplication.shared.isIdleTimerDisabled = true }
         if !pendingAlerts.isEmpty {
             let a = pendingAlerts.removeFirst()
             presentAlert(a)
@@ -319,6 +428,15 @@ final class RunViewController: UIViewController, RunHost {
         closed = true
         vm?.shutdown()
         vm = nil
+        if let s = shownSince { playSeconds += Date().timeIntervalSince(s) }
+        shownSince = nil
+        if let pkg = packageName {
+            // Husk-style "last run" log and play time, shown in App info.
+            let text = (logLines + pendingLog).suffix(400).joined(separator: "\n")
+            PackageManager.shared.saveLastRunLog(pkg, text)
+            PackageManager.shared.recordRun(pkg, seconds: playSeconds)
+        }
+        UIApplication.shared.isIdleTimerDisabled = false
         onEnd?(self)
     }
 

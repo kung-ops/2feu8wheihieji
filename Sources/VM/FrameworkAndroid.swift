@@ -192,6 +192,10 @@ extension Framework {
             return O(box.find(id: resId(a[0]))?.jobj)
         case "getContext":
             return O(vm.currentActivity?.activity)
+        case "getResources":
+            return O(vm.newObject("Landroid/content/res/Resources;", native: ResourcesBox()))
+        case "getRootView":
+            return O(vm.currentActivity?.rootBox?.jobj ?? t)
         case "post":
             if let r = a[0].o { schedule(vm, r, delayMs: 0) }
             return B(true)
@@ -205,10 +209,42 @@ extension Framework {
             let h = box.handler
             DispatchQueue.main.async { h?(box, "click", 0) }
             return B(true)
-        case "getWidth", "getMeasuredWidth":
+        case "getWidth", "getMeasuredWidth", "getRight":
+            if box.pxWidth > 0 { return I(box.pxWidth) }
             return I(onMain { Int32(box.view.bounds.width * 2) })
-        case "getHeight", "getMeasuredHeight":
+        case "getHeight", "getMeasuredHeight", "getBottom":
+            if box.pxHeight > 0 { return I(box.pxHeight) }
             return I(onMain { Int32(box.view.bounds.height * 2) })
+        case "getLeft", "getTop", "getScrollX", "getScrollY", "getPaddingLeft", "getPaddingTop", "getPaddingRight",
+             "getPaddingBottom", "getPaddingStart", "getPaddingEnd":
+            return I(0)
+        case "invalidate", "postInvalidate", "postInvalidateOnAnimation", "invalidateDrawable":
+            vm.invalidate(box)
+            return .void
+        case "postInvalidateDelayed":
+            let ms = Int(max(0, min(a[0].j, 60_000)))
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(ms)) { [weak vm] in
+                vm?.post("invalidate") { [weak vm] in vm?.invalidate(box) }
+            }
+            return .void
+        case "setOnTouchListener":
+            box.touchListener = a[0].o
+            if a[0].o != nil {
+                onMain {
+                    (box.view as? CanvasView)?.acceptsTouches = true
+                    box.view.isUserInteractionEnabled = true
+                }
+            }
+            return .void
+        case "getDrawingRect", "getHitRect", "getLocalVisibleRect", "getGlobalVisibleRect":
+            let w = box.pxWidth > 0 ? box.pxWidth : onMain { Int32(box.view.bounds.width * 2) }
+            let h = box.pxHeight > 0 ? box.pxHeight : onMain { Int32(box.view.bounds.height * 2) }
+            if let r = a.first?.o { setRect(r, 0, 0, CGFloat(w), CGFloat(h)) }
+            return ref.ret == "Z" ? B(true) : .void
+        case "onDraw", "draw", "dispatchDraw", "onMeasure", "onLayout", "onSizeChanged", "setWillNotDraw",
+             "setLayerType", "measure", "layout", "setMeasuredDimension", "onFinishInflate", "setDrawingCacheEnabled",
+             "setKeepScreenOn", "setSystemUiVisibility", "buildDrawingCache", "destroyDrawingCache":
+            return .void
         case "setSelected", "setActivated", "setPressed", "setRotation", "setScaleX", "setScaleY",
              "setTranslationX", "setTranslationY", "setX", "setY", "setTextIsSelectable", "setHorizontallyScrolling",
              "setCompoundDrawablesWithIntrinsicBounds", "setLayoutDirection", "setImageTintList", "setColorFilter",
@@ -318,8 +354,16 @@ extension Framework {
             return B(true)
         case "getMainLooper":
             return O(vm.newObject("Landroid/os/Looper;"))
+        case "setRequestedOrientation":
+            let o = a[0].i
+            host.requestedOrientation = o
+            let screen = vm.host
+            DispatchQueue.main.async { screen?.requestOrientation(o) }
+            return .void
+        case "getRequestedOrientation":
+            return I(host.requestedOrientation)
         default:
-            return contextDir(vm, ref, a)
+            return contextDir(vm, ref, a) ?? contextGraphics(vm, ref, a)
         }
     }
 }

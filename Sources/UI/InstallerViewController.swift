@@ -8,6 +8,8 @@ final class InstallerViewController: UIViewController {
     /// Delete the APK file when done (it was a private copy).
     private let temporary: Bool
     private var apk: ApkPackage?
+    /// What's in the file: the APK itself, or a bundle's base APK.
+    private var bundle: ApkBundle.Resolved?
     private var installedPackage: String?
     private var finished = false
 
@@ -120,11 +122,20 @@ final class InstallerViewController: UIViewController {
         let url = apkURL
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var pkg: ApkPackage? = nil
+            var resolved: ApkBundle.Resolved? = nil
             var err: Error? = nil
-            do { pkg = try ApkPackage(url: url, scanCode: true) } catch { err = error }
+            do {
+                let r = try ApkBundle.resolve(url)
+                resolved = r
+                pkg = try ApkPackage(url: r.apk, scanCode: true)
+            } catch { err = error }
             let icon = pkg?.iconImage(maxSide: 192)
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self = self else {
+                    if let r = resolved, r.temporary { try? FileManager.default.removeItem(at: r.apk) }
+                    return
+                }
+                self.bundle = resolved
                 if let pkg = pkg { self.showReady(pkg, icon: icon) } else { self.showFailure(err?.localizedDescription ?? "Unknown error") }
             }
         }
@@ -212,6 +223,17 @@ final class InstallerViewController: UIViewController {
         }
         if !notes.isEmpty {
             content.addArrangedSubview(section("Compatibility", notes.map { "• " + $0 }.joined(separator: "\n"), warning: true))
+        }
+        if let b = bundle, b.temporary {
+            var body = "This is an app bundle. Its main APK is installed"
+            if !b.skippedSplits.isEmpty {
+                body += "; \(b.skippedSplits.count) extra part(s) for other screen sizes, languages or native code are left out, so some pictures may be missing"
+            }
+            body += "."
+            if !b.extraFiles.isEmpty {
+                body += " Its game data (\(b.extraFiles.count) file(s)) is copied to Shared Storage."
+            }
+            content.addArrangedSubview(section("App bundle", body))
         }
         let perms = apk.permissions.map { $0.replacingOccurrences(of: "android.permission.", with: "") }
         if !perms.isEmpty {
@@ -301,6 +323,7 @@ final class InstallerViewController: UIViewController {
         guard !finished, stage != .installing else { return }
         finished = true
         if temporary { try? FileManager.default.removeItem(at: apkURL) }
+        if let b = bundle, b.temporary { try? FileManager.default.removeItem(at: b.apk) }
         let pkg = installedPackage
         let done = onFinish
         dismiss(animated: true) { done?(pkg, open) }

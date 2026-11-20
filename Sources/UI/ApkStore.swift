@@ -13,7 +13,7 @@ enum ApkStore {
         var out: [URL] = []
         for dir in [documents, documents.appendingPathComponent("Inbox")] {
             let items = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles])) ?? []
-            out += items.filter { $0.pathExtension.lowercased() == "apk" }
+            out += items.filter { ["apk", "apks", "xapk", "apkm"].contains($0.pathExtension.lowercased()) }
         }
         return out.sorted { a, b in
             let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? nil
@@ -36,7 +36,9 @@ enum ApkStore {
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         var name = url.deletingPathExtension().lastPathComponent
         if name.isEmpty { name = "app" }
-        let dest = staging.appendingPathComponent(String(UUID().uuidString.prefix(8)) + "-" + name + ".apk")
+        var ext = url.pathExtension.lowercased()
+        if !ApkBundle.extensions.contains(ext) { ext = "apk" }
+        let dest = staging.appendingPathComponent(String(UUID().uuidString.prefix(8)) + "-" + name + "." + ext)
         let isInbox = url.path.contains("/Inbox/") || url.path.contains("-Inbox/")
         if isInbox, (try? fm.moveItem(at: url, to: dest)) != nil { return dest }
         try fm.copyItem(at: url, to: dest)
@@ -50,12 +52,13 @@ enum ApkStore {
         let fm = FileManager.default
         if url.standardizedFileURL.deletingLastPathComponent() == documents.standardizedFileURL { return url }
         var name = url.lastPathComponent
-        if url.pathExtension.lowercased() != "apk" { name += ".apk" }
+        if !["apk", "apks", "xapk", "apkm"].contains(url.pathExtension.lowercased()) { name += ".apk" }
+        let ext = (name as NSString).pathExtension
         var dest = documents.appendingPathComponent(name)
         var n = 2
         let base = (name as NSString).deletingPathExtension
         while fm.fileExists(atPath: dest.path) {
-            dest = documents.appendingPathComponent("\(base) \(n).apk")
+            dest = documents.appendingPathComponent("\(base) \(n).\(ext)")
             n += 1
         }
         try fm.copyItem(at: url, to: dest)

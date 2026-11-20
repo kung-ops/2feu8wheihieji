@@ -68,4 +68,4 @@ EOF
     echo "built $OUT/$app.apk"
 }
 
-for app in counter memtest todo; do build_app "$app"; done
+for app in counter memtest todo tapgame; do build_app "$app"; done

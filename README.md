@@ -27,6 +27,29 @@ Made for an **iPhone 7 on iOS 15 or iOS 12**. It also runs on 1 GB iPhones
 - **Settings.** The virtual phone (Android 9, 1 GB RAM, memory per app) and
   the real iPhone (model, iOS version, RAM, memory in use), plus PC Link.
 
+## Game features (ideas from Husk)
+- **Simple 2D games and drawing apps run.** Views that draw in
+  `onDraw(Canvas)` (shapes, text, paths, bitmaps, transforms) are drawn with
+  CoreGraphics at up to about 40 frames a second, and touches reach
+  `onTouchEvent` / `OnTouchListener` as `MotionEvent`s.
+- **Game settings per app** (App info): a custom name, portrait / landscape /
+  "as the app asks" (`android:screenOrientation` and
+  `setRequestedOrientation` work), **full screen** (tap with three fingers to
+  show the bars) and **keep the screen on**.
+- **Back Up Saves / Restore Saves**: everything an app saved (files,
+  databases, SharedPreferences) as a .zip to keep in Files or move to
+  another iPhone. App info also shows play time and the **last run log**,
+  which you can share.
+- **App bundles**: `.apks`, `.xapk` and `.apkm` install their main APK.
+  OBB game data in an XAPK is copied to Shared Storage.
+- **Download from a link**: Install or Downloads › + › Download from a link.
+- **Shared Storage**: the virtual phone's `/sdcard` is the "Shared Storage"
+  folder in Files › On My iPhone › APK Sandbox, so you can add game data.
+
+Husk itself goes further: it runs native Android code and a whole LineageOS
+virtual machine. Both need JIT, which iOS 12 doesn't give to apps, so those
+parts can't come to APK Sandbox.
+
 ## What Android apps can do in the sandbox
 - Layouts from `res/layout/*.xml` and views made in code: TextView, Button,
   EditText, CheckBox/Switch, ImageView, SeekBar, ProgressBar, LinearLayout and
@@ -63,7 +86,8 @@ This doesn't emulate Android, and nothing can run *every* APK on iOS. These
 don't work:
 - **Native code** (`lib/*.so`): games, Unity/Flutter/React Native apps, most
   emulators.
-- OpenGL, WebView, RecyclerView, Fragments, Jetpack Compose UIs, Spinner.
+- OpenGL, SurfaceView game loops on their own thread, WebView,
+  RecyclerView, Fragments, Jetpack Compose UIs, Spinner.
 - Google Play services, networking, camera and sensors inside Android apps.
 
 Small apps work best: a hello-world, a counter, a to-do list, a calculator or a
@@ -118,6 +142,8 @@ R=Tools/LinuxRunner/build/runner
 $R Tools/TestApps/prebuilt/counter.apk tap:plus tap:open
 $R Tools/TestApps/prebuilt/todo.apk tap:add "tap:Buy milk"
 $R Tools/TestApps/prebuilt/memtest.apk "tap:Fill memory"
+$R Tools/TestApps/prebuilt/tapgame.apk wait:500 touch:360,640
+$R backup com.kungops.counter saves.zip && $R restore com.kungops.counter saves.zip
 $R install Tools/TestApps/prebuilt/counter.apk && $R run com.kungops.counter
 bash Tools/UIKitCheck/typecheck.sh
 ```

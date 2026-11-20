@@ -9,8 +9,10 @@ set -e
 H="$(cd "$(dirname "$0")" && pwd)"
 SRC="$H/../../Sources"
 mkdir -p "$H/build" && cd "$H/build"
+rm -f libUIKit.a libCompression.a
 swiftc -emit-module -emit-library -static -module-name UIKit -parse-as-library -O "$H/UIKit/UIKit.swift" -o libUIKit.a -emit-module-path UIKit.swiftmodule
 swiftc -emit-module -emit-library -static -module-name Compression -parse-as-library -O -I "$H/CZlib" "$H/Compression/Compression.swift" -o libCompression.a -emit-module-path Compression.swiftmodule
-FILES="$(ls "$SRC"/Apk/*.swift "$SRC"/VM/*.swift) $SRC/UI/ViewBox.swift $SRC/UI/LayoutInflater.swift $SRC/UI/ActivityHost.swift $SRC/BuildInfo.swift"
-swiftc -O -I . -I "$H/CZlib" -L . -lUIKit -lCompression -lz $FILES "$H/Runner/main.swift" "$H/Runner/Shims.swift" -o runner
+FILES="$(ls "$SRC"/Apk/*.swift "$SRC"/VM/*.swift) $SRC/UI/ViewBox.swift $SRC/UI/LayoutInflater.swift $SRC/UI/ActivityHost.swift $SRC/UI/CanvasView.swift $SRC/BuildInfo.swift"
+# APKSANDBOX_RUNNER leaves out the iOS-only drawing code (CoreGraphics).
+swiftc -O -D APKSANDBOX_RUNNER -I . -I "$H/CZlib" -L . -lUIKit -lCompression -lz $FILES "$H/Runner/main.swift" "$H/Runner/Shims.swift" -o runner
 echo "BUILD OK: $H/build/runner"

@@ -132,6 +132,7 @@ extension VM {
             guard let vm = self, let o = obj else { return }
             vm.post("ui-event") { try vm.dispatchEvent(b, o, event, value, host) }
         }
+        installCanvasHandlers(box, obj)
         for c in box.children { wrap(c, in: host) }
         return obj
     }
@@ -219,6 +220,33 @@ extension VM {
         box.handler = { [weak self, weak obj] b, event, value in
             guard let vm = self, let o = obj else { return }
             vm.post("ui-event") { try vm.dispatchEvent(b, o, event, value, host) }
+        }
+        installCanvasHandlers(box, obj)
+    }
+
+    /// Size and touch events for views that can draw (the app's custom views).
+    func installCanvasHandlers(_ box: ViewBox, _ obj: JObject) {
+        guard box.isCanvas else { return }
+        box.sizeHandler = { [weak self, weak obj] b, w, h in
+            guard let vm = self, let o = obj else { return }
+            vm.post("size") { try vm.canvasSizeChanged(b, o, width: w, height: h) }
+        }
+        box.touchHandler = { [weak self, weak obj] b, action, x, y in
+            guard let vm = self, let o = obj else { return }
+            vm.post("touch") { try vm.dispatchTouch(b, o, action: action, x: x, y: y) }
+        }
+        let touches = wantsTouches(obj)
+        let custom = obj.cls.isApp
+        onMain {
+            guard let cv = box.view as? CanvasView else { return }
+            if touches {
+                cv.acceptsTouches = true
+                cv.isUserInteractionEnabled = true
+            }
+            if custom && cv.preferredHeight == 0 {
+                cv.preferredHeight = 360
+                cv.invalidateIntrinsicContentSize()
+            }
         }
     }
 
