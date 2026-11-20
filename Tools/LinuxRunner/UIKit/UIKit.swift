@@ -95,6 +95,7 @@ open class UIView {
     }
     public func addGestureRecognizer(_ g: AnyObject) {}
     public func layoutIfNeeded() {}
+    public func invalidateIntrinsicContentSize() {}
 }
 public final class UILabel: UIView {
     public var text: String?
@@ -166,6 +167,7 @@ public final class UIStackView: UIView {
 }
 public final class UIScrollView: UIView {
     public var alwaysBounceVertical = false
+    public var isScrollEnabled = true
     public enum KeyboardDismissMode { case interactive, none }
     public var keyboardDismissMode = KeyboardDismissMode.none
     public let contentLayoutGuide = UILayoutGuide()

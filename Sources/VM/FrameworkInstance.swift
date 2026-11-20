@@ -91,7 +91,18 @@ extension Framework {
             case "getColor": r = I(resColor(vm, a[0]))
             case "getInteger": r = I(Int32(truncatingIfNeeded: vm.apk.resources?.value(resId(a[0])).map { $0.data } ?? 0))
             case "getBoolean": r = B((vm.apk.resources?.value(resId(a[0]))?.data ?? 0) != 0)
-            case "getDimension", "getDimensionPixelSize": r = ref.ret == "F" ? Ret.val(Value.float(0)) : I(0)
+            case "getDimension", "getDimensionPixelSize", "getDimensionPixelOffset":
+                var px: Float = 0
+                if let v = vm.apk.resources?.value(resId(a[0])), v.type == ResValue.typeDimension {
+                    px = Float(v.dimension * Graphics.density)
+                }
+                r = ref.ret == "F" ? Ret.val(Value.float(px)) : I(Int32(px.rounded()))
+            case "getDisplayMetrics":
+                let dm = vm.newObject("Landroid/util/DisplayMetrics;")
+                fillDisplayMetrics(dm)
+                r = O(dm)
+            case "getDrawable":
+                r = O(drawable(vm, resId(a[0])))
             default: break
             }
         case is InflaterBox:
@@ -141,6 +152,15 @@ extension Framework {
             }
         case let ab as AtomicBox: r = try atomicMethod(vm, t, ab, ref, a)
         case is RuntimeBox: r = runtimeMethod(vm, ref)
+        case let cb as CanvasBox: r = try canvasMethod(vm, t, cb, ref, a)
+        case let pb as PaintBox: r = try paintMethod(vm, t, pb, ref, a)
+        case let pb as PathBox: r = pathMethod(vm, t, pb, ref, a)
+        case let bb as BitmapBox: r = bitmapMethod(vm, t, bb, ref, a)
+        case let db as DrawableBox: r = drawableMethod(vm, t, db, ref, a)
+        case let me as MotionEventBox: r = motionEventMethod(vm, me, ref, a)
+        case is DisplayBox: r = displayMethod(vm, ref, a)
+        case is WindowManagerBox:
+            if n == "getDefaultDisplay" || n == "getCurrentWindowMetrics" { r = O(vm.newObject("Landroid/view/Display;", native: DisplayBox())) }
         case let ad as AdapterBox: r = try adapterMethod(vm, t, ad, ref, a)
         case is ActivityManagerBox: r = activityManagerMethod(vm, ref, a)
         case let fs as FileStreamBox: r = try fileStreamMethod(vm, t, fs, ref, a)
@@ -189,6 +209,13 @@ extension Framework {
             break
         }
         if r == nil, t.native == nil, let path = filePath(t) { r = try fileMethod(vm, t, path, ref, a) }
+        if r == nil, t.native == nil {
+            switch t.cls.name {
+            case "Landroid/graphics/Rect;", "Landroid/graphics/RectF;": r = rectMethod(vm, t, ref, a)
+            case "Landroid/graphics/Point;", "Landroid/graphics/PointF;": r = pointMethod(vm, t, ref, a)
+            default: break
+            }
+        }
         if r == nil, t.native == nil, n == "notifyDataSetChanged" || n == "notifyDataSetInvalidated" {
             // The app's own BaseAdapter subclass.
             try vm.notifyAdapterChanged(t)
@@ -260,6 +287,7 @@ extension Framework {
         if let r = try fileConstruct(vm, t, ref, a) { return r }
         if let r = try streamConstruct(vm, t, ref, a) { return r }
         if let r = adapterConstruct(vm, t, ref, a) { return r }
+        if let r = graphicsConstruct(vm, t, ref, a) { return r }
         switch c {
         case "Ljava/lang/Object;":
             return .void

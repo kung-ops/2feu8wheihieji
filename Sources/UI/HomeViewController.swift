@@ -177,10 +177,10 @@ final class HomeViewController: UIViewController, UICollectionViewDataSource, UI
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "app", for: indexPath) as! AppCell
         let app = apps[indexPath.item]
-        cell.label.text = app.label
+        cell.label.text = PackageManager.shared.displayName(app)
         cell.icon.image = icon(app)
         cell.runningDot.isHidden = !TaskManager.shared.isRunning(app.packageName)
-        cell.accessibilityLabel = app.label
+        cell.accessibilityLabel = cell.label.text
         return cell
     }
 
@@ -210,9 +210,9 @@ final class HomeViewController: UIViewController, UICollectionViewDataSource, UI
         guard g.state == .began, let ip = grid.indexPathForItem(at: g.location(in: grid)), ip.item < apps.count else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let app = apps[ip.item]
-        let sheet = UIAlertController(title: app.label, message: "Version \(app.versionName)", preferredStyle: .actionSheet)
+        let sheet = UIAlertController(title: PackageManager.shared.displayName(app), message: "Version \(app.versionName)", preferredStyle: .actionSheet)
         sheet.addAction(UIAlertAction(title: "Open", style: .default) { [weak self] _ in self?.open(app) })
-        sheet.addAction(UIAlertAction(title: "App info", style: .default) { [weak self] _ in self?.showInfo(app) })
+        sheet.addAction(UIAlertAction(title: "App info & game settings", style: .default) { [weak self] _ in self?.showInfo(app) })
         if TaskManager.shared.isRunning(app.packageName) {
             sheet.addAction(UIAlertAction(title: "Force stop", style: .default) { _ in TaskManager.shared.stop(app.packageName) })
         }
@@ -240,10 +240,21 @@ final class HomeViewController: UIViewController, UICollectionViewDataSource, UI
     // MARK: - Dock
 
     @objc private func installTapped() {
-        let picker = UIDocumentPickerViewController(documentTypes: ["com.android.package-archive", "public.data", "public.zip-archive"], in: .import)
-        picker.delegate = self
-        picker.allowsMultipleSelection = false
-        present(picker, animated: true)
+        let sheet = UIAlertController(title: "Add a game or app", message: "APK files and app bundles (.apks, .xapk, .apkm).", preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(title: "Choose from Files", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            let picker = UIDocumentPickerViewController(documentTypes: ["com.android.package-archive", "public.data", "public.zip-archive"], in: .import)
+            picker.delegate = self
+            picker.allowsMultipleSelection = false
+            self.present(picker, animated: true)
+        })
+        sheet.addAction(UIAlertAction(title: "Download from a link", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            LinkDownloader.ask(from: self) { [weak self] file in self?.install(file) }
+        })
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        anchor(sheet, to: dock)
+        present(sheet, animated: true)
     }
 
     @objc private func downloadsTapped() {
@@ -351,6 +362,9 @@ final class AppCell: UICollectionViewCell {
 /// screen's dark wallpaper, dark on white screens).
 final class AppNavigationController: UINavigationController {
     override var childForStatusBarStyle: UIViewController? { return topViewController }
+    /// The virtual phone's own screens stay portrait; games turn on their own screen.
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { return .portrait }
+    override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation { return .portrait }
 
     override func viewDidLoad() {
         super.viewDidLoad()

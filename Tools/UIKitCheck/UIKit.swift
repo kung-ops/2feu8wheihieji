@@ -2,6 +2,9 @@
 // the same signatures as the real iOS SDK. Lets `typecheck.sh` catch Swift
 // errors in the app's screens on Linux, without a Mac. Nothing here runs.
 @_exported import Foundation
+#if canImport(FoundationNetworking)
+@_exported import FoundationNetworking
+#endif
 
 public typealias CGFloat = Foundation.CGFloat
 
@@ -34,11 +37,47 @@ extension NSString {
 }
 
 public final class CGColor {}
-public final class CGImage {}
+public final class CGImage {
+    public var width: Int { return 0 }
+    public var height: Int { return 0 }
+    public func cropping(to rect: CGRect) -> CGImage? { return nil }
+}
+
+// MARK: - CoreGraphics (the parts the canvas renderer uses)
+
+public struct CGAffineTransform {
+    public init(scaleX sx: CGFloat, y sy: CGFloat) {}
+    public init(translationX tx: CGFloat, y ty: CGFloat) {}
+    public init(rotationAngle angle: CGFloat) {}
+}
+public enum CGPathFillRule: Int { case winding, evenOdd }
+public enum CGLineCap: Int32 { case butt, round, square }
+public enum CGBlendMode: Int32 { case normal, multiply, screen, overlay, clear, copy }
+public final class CGPath {
+    public init(roundedRect rect: CGRect, cornerWidth: CGFloat, cornerHeight: CGFloat, transform: UnsafePointer<CGAffineTransform>?) {}
+}
+public final class CGContext {
+    public func scaleBy(x sx: CGFloat, y sy: CGFloat) {}
+    public func translateBy(x tx: CGFloat, y ty: CGFloat) {}
+    public func rotate(by angle: CGFloat) {}
+    public func saveGState() {}
+    public func restoreGState() {}
+    public func clip(to rect: CGRect) {}
+    public func setFillColor(_ color: CGColor) {}
+    public func setStrokeColor(_ color: CGColor) {}
+    public func setLineWidth(_ width: CGFloat) {}
+    public func setLineCap(_ cap: CGLineCap) {}
+    public func fill(_ rect: CGRect) {}
+    public func addPath(_ path: CGPath) {}
+    public func fillPath(using rule: CGPathFillRule = .winding) {}
+    public func strokePath() {}
+}
+public func UIGraphicsGetCurrentContext() -> CGContext? { return nil }
 
 open class UIColor: NSObject {
     public init(red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {}
     public init(white: CGFloat, alpha: CGFloat) {}
+    public init(cgColor: CGColor) {}
     open class var white: UIColor { return never() }
     open class var black: UIColor { return never() }
     open class var gray: UIColor { return never() }
@@ -58,6 +97,8 @@ open class UIFont: NSObject {
     open class func boldSystemFont(ofSize fontSize: CGFloat) -> UIFont { return never() }
     open class func italicSystemFont(ofSize fontSize: CGFloat) -> UIFont { return never() }
     open var pointSize: CGFloat { return 0 }
+    open var ascender: CGFloat { return 0 }
+    open var descender: CGFloat { return 0 }
     open func withSize(_ fontSize: CGFloat) -> UIFont { return self }
 }
 
@@ -68,6 +109,9 @@ open class UIImage: NSObject {
     public override init() {}
     public init(cgImage: CGImage) {}
     open var size: CGSize { return .zero }
+    open var scale: CGFloat { return 1 }
+    open var cgImage: CGImage? { return nil }
+    open func draw(in rect: CGRect, blendMode: CGBlendMode, alpha: CGFloat) {}
     open func withRenderingMode(_ renderingMode: UIImage.RenderingMode) -> UIImage { return self }
     open func draw(in rect: CGRect) {}
 }
@@ -81,6 +125,13 @@ open class UIBezierPath: NSObject {
     public init(rect: CGRect) {}
     public init(ovalIn rect: CGRect) {}
     public init(roundedRect rect: CGRect, cornerRadius: CGFloat) {}
+    public init(cgPath: CGPath) {}
+    open var cgPath: CGPath { get { return never() } set {} }
+    open var usesEvenOddFillRule = false
+    open func addArc(withCenter center: CGPoint, radius: CGFloat, startAngle: CGFloat, endAngle: CGFloat, clockwise: Bool) {}
+    open func addQuadCurve(to endPoint: CGPoint, controlPoint: CGPoint) {}
+    open func addCurve(to endPoint: CGPoint, controlPoint1: CGPoint, controlPoint2: CGPoint) {}
+    open func apply(_ transform: CGAffineTransform) {}
     open var lineWidth: CGFloat = 1
     public enum LineJoin { case miter, round, bevel }
     open var lineJoinStyle: CGLineJoin = .miter
@@ -99,6 +150,7 @@ public enum CGLineJoin: Int32 { case miter, round, bevel }
 open class CALayer: NSObject {
     open var cornerRadius: CGFloat = 0
     open var frame: CGRect = .zero
+    open var contents: Any?
     open func insertSublayer(_ layer: CALayer, at idx: UInt32) {}
     open func addSublayer(_ layer: CALayer) {}
 }
@@ -150,15 +202,28 @@ open class UILayoutGuide: NSObject {
 
 // MARK: - Responders, views
 
-open class UIResponder: NSObject {}
+open class UIResponder: NSObject {
+    open func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {}
+    open func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {}
+    open func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {}
+    open func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {}
+}
+open class UITouch: NSObject {
+    open func location(in view: UIView?) -> CGPoint { return .zero }
+}
+open class UIEvent: NSObject {}
 
 open class UIGestureRecognizer: NSObject {
     public enum State: Int { case possible, began, changed, ended, cancelled, failed }
     public init(target: Any?, action: Selector?) {}
     open var state: UIGestureRecognizer.State { return .possible }
+    open var cancelsTouchesInView = true
     open func location(in view: UIView?) -> CGPoint { return .zero }
 }
-open class UITapGestureRecognizer: UIGestureRecognizer {}
+open class UITapGestureRecognizer: UIGestureRecognizer {
+    open var numberOfTouchesRequired = 1
+    open var numberOfTapsRequired = 1
+}
 open class UILongPressGestureRecognizer: UIGestureRecognizer {
     open var minimumPressDuration: TimeInterval = 0.5
 }
@@ -185,6 +250,7 @@ open class UIView: UIResponder {
     open var layer: CALayer { return never() }
     open var contentMode: UIView.ContentMode = .scaleToFill
     open var accessibilityLabel: String?
+    open var tag: Int = 0
     open var layoutMargins: UIEdgeInsets = .zero
     open var safeAreaLayoutGuide: UILayoutGuide { return never() }
     open var topAnchor: NSLayoutYAxisAnchor { return never() }
@@ -196,12 +262,14 @@ open class UIView: UIResponder {
     open var widthAnchor: NSLayoutDimension { return never() }
     open var heightAnchor: NSLayoutDimension { return never() }
     open var intrinsicContentSize: CGSize { return .zero }
+    public static let noIntrinsicMetric: CGFloat = -1
     open func addSubview(_ view: UIView) {}
     open func insertSubview(_ view: UIView, at index: Int) {}
     open func insertSubview(_ view: UIView, belowSubview siblingSubview: UIView) {}
     open func removeFromSuperview() {}
     open func addGestureRecognizer(_ gestureRecognizer: UIGestureRecognizer) {}
     open func layoutIfNeeded() {}
+    open func invalidateIntrinsicContentSize() {}
     open func setNeedsLayout() {}
     open func layoutSubviews() {}
     open class func animate(withDuration duration: TimeInterval, animations: @escaping () -> Void) {}
@@ -271,6 +339,8 @@ open class UITextField: UIControl {
     open var autocorrectionType: UITextAutocorrectionType = .default
     open var keyboardType: UIKeyboardType = .default
     open var isSecureTextEntry = false
+    public enum ViewMode: Int { case never, whileEditing, unlessEditing, always }
+    open var clearButtonMode: UITextField.ViewMode = .never
 }
 public enum UITextAutocapitalizationType: Int { case none, words, sentences, allCharacters }
 public enum UITextAutocorrectionType: Int { case `default`, no, yes }
@@ -278,6 +348,7 @@ public enum UIKeyboardType: Int { case `default`, URL, numberPad }
 
 open class UISwitch: UIControl {
     open var isOn = false
+    open var onTintColor: UIColor?
     open func setOn(_ on: Bool, animated: Bool) {}
 }
 open class UISlider: UIControl {
@@ -325,6 +396,7 @@ open class UIStackView: UIView {
 open class UIScrollView: UIView {
     public enum KeyboardDismissMode: Int { case none, onDrag, interactive }
     open var alwaysBounceVertical = false
+    open var isScrollEnabled = true
     open var keyboardDismissMode: UIScrollView.KeyboardDismissMode = .none
     open var contentLayoutGuide: UILayoutGuide { return never() }
     open var frameLayoutGuide: UILayoutGuide { return never() }
@@ -362,6 +434,7 @@ open class UITableViewCell: UIView {
     open var detailTextLabel: UILabel? { return nil }
     open var imageView: UIImageView? { return nil }
     open var accessoryType: UITableViewCell.AccessoryType = .none
+    open var accessoryView: UIView?
     open var selectionStyle: UITableViewCell.SelectionStyle = .default
 }
 
@@ -415,6 +488,14 @@ open class UICollectionView: UIScrollView {
 // MARK: - View controllers
 
 public enum UIStatusBarStyle: Int { case `default`, lightContent }
+public enum UIInterfaceOrientation: Int { case unknown, portrait, portraitUpsideDown, landscapeLeft, landscapeRight }
+public struct UIInterfaceOrientationMask: OptionSet {
+    public let rawValue: UInt
+    public init(rawValue: UInt) { self.rawValue = rawValue }
+    public static let portrait = UIInterfaceOrientationMask(rawValue: 2), landscapeLeft = UIInterfaceOrientationMask(rawValue: 16),
+        landscapeRight = UIInterfaceOrientationMask(rawValue: 8), landscape = UIInterfaceOrientationMask(rawValue: 24),
+        all = UIInterfaceOrientationMask(rawValue: 30), allButUpsideDown = UIInterfaceOrientationMask(rawValue: 26)
+}
 public enum UIModalPresentationStyle: Int { case fullScreen, pageSheet, formSheet, currentContext, custom, overFullScreen, popover, none, automatic }
 
 open class UIViewController: UIResponder {
@@ -435,6 +516,12 @@ open class UIViewController: UIResponder {
     open var popoverPresentationController: UIPopoverPresentationController? { return nil }
     open var preferredStatusBarStyle: UIStatusBarStyle { return .default }
     open var childForStatusBarStyle: UIViewController? { return nil }
+    open var supportedInterfaceOrientations: UIInterfaceOrientationMask { return .portrait }
+    open var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation { return .portrait }
+    open var shouldAutorotate: Bool { return true }
+    open var prefersStatusBarHidden: Bool { return false }
+    open var prefersHomeIndicatorAutoHidden: Bool { return false }
+    open class func attemptRotationToDeviceOrientation() {}
     open func loadView() {}
     open func loadViewIfNeeded() {}
     open func viewDidLoad() {}
@@ -535,6 +622,9 @@ open class UIAlertController: UIViewController {
     public convenience init(title: String?, message: String?, preferredStyle: UIAlertController.Style) { self.init(nibName: nil, bundle: nil) }
     open var actions: [UIAlertAction] { return [] }
     open func addAction(_ action: UIAlertAction) {}
+    open var textFields: [UITextField]? { return nil }
+    open var message: String?
+    open func addTextField(configurationHandler: ((UITextField) -> Void)? = nil) {}
 }
 
 open class UIActivityViewController: UIViewController {
@@ -559,6 +649,7 @@ open class UIApplication: UIResponder {
     public struct OpenURLOptionsKey: Hashable { public init(_ s: String) {} }
     open class var shared: UIApplication { return never() }
     open var keyWindow: UIWindow? { return nil }
+    open var isIdleTimerDisabled = false
     public static let didBecomeActiveNotification = Notification.Name("UIApplicationDidBecomeActiveNotification")
     public static let didReceiveMemoryWarningNotification = Notification.Name("UIApplicationDidReceiveMemoryWarningNotification")
 }
@@ -572,6 +663,7 @@ open class UIScreen: NSObject {
 open class UIDevice: NSObject {
     open class var current: UIDevice { return never() }
     open var systemVersion: String { return "" }
+    open func setValue(_ value: Any?, forKey key: String) {}
     open var model: String { return "" }
 }
 open class UIFeedbackGenerator: NSObject {}

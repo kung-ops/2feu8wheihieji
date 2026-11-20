@@ -27,6 +27,8 @@ final class ApkPackage {
     private(set) var permissions: [String] = []
     private(set) var activities: [String] = []
     private(set) var launcherActivity: String?
+    /// The launcher activity's android:screenOrientation (-1 if not set).
+    private(set) var launcherOrientation = -1
     private(set) var applicationClass: String?
     private(set) var nativeLibs: [String] = []
     private(set) var classCount = 0
@@ -183,6 +185,7 @@ final class ApkPackage {
                     if actions.contains("android.intent.action.MAIN") &&
                         (cats.contains("android.intent.category.LAUNCHER") || cats.contains("android.intent.category.LEANBACK_LAUNCHER")) {
                         launcherActivity = full
+                        if let o = a.attr("screenOrientation") { launcherOrientation = Int(Int32(truncatingIfNeeded: o.data)) }
                     }
                 }
             }

@@ -600,6 +600,7 @@ extension Framework {
         case "Landroidx/core/content/ContextCompat;", "Landroidx/core/content/res/ResourcesCompat;":
             switch n {
             case "getColor": return I(resColor(vm, arg(1)))
+            case "getDrawable": return O(drawable(vm, resId(arg(1))))
             case "checkSelfPermission": return I(0)
             default: return nil
             }
@@ -624,6 +625,7 @@ extension Framework {
             return nil
 
         default:
+            if let r = try graphicsStatic(vm, ref, a) { return r }
             if let r = deviceStatic(vm, ref, a) { return r }
             return try moreStatic(vm, ref, a)
         }

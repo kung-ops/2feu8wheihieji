@@ -10,4 +10,11 @@ public class View {
     public void setBackgroundColor(int c) {}
     public void setPadding(int l, int t, int r, int b) {}
     public interface OnClickListener { void onClick(View v); }
+    public android.content.res.Resources getResources() { return null; }
+    public void invalidate() {}
+    public int getWidth() { return 0; }
+    public int getHeight() { return 0; }
+    protected void onDraw(android.graphics.Canvas c) {}
+    protected void onSizeChanged(int w, int h, int ow, int oh) {}
+    public boolean onTouchEvent(MotionEvent e) { return false; }
 }

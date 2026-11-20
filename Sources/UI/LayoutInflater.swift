@@ -148,7 +148,8 @@ final class AndroidLayoutInflater {
             }
             return box
         case .other:
-            let v = UIView()
+            // Plain Views, and the app's own custom views (which may draw).
+            let v = CanvasView()
             return ViewBox(kind: k, elementName: element, view: v, control: v)
         }
     }

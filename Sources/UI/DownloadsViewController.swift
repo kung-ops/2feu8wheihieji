@@ -56,6 +56,21 @@ final class DownloadsViewController: UITableViewController, UIDocumentPickerDele
     }
 
     @objc private func pick() {
+        let sheet = UIAlertController(title: "Add a game or app", message: "APK files and app bundles (.apks, .xapk, .apkm).", preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(title: "Choose from Files", style: .default) { [weak self] _ in self?.pickFiles() })
+        sheet.addAction(UIAlertAction(title: "Download from a link", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            LinkDownloader.ask(from: self) { [weak self] file in
+                self?.reload()
+                self?.openInstaller(file)
+            }
+        })
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let pop = sheet.popoverPresentationController { pop.barButtonItem = navigationItem.rightBarButtonItem }
+        present(sheet, animated: true)
+    }
+
+    private func pickFiles() {
         let picker = UIDocumentPickerViewController(documentTypes: ["com.android.package-archive", "public.data", "public.zip-archive"], in: .import)
         picker.delegate = self
         picker.allowsMultipleSelection = true
@@ -82,7 +97,7 @@ final class DownloadsViewController: UITableViewController, UIDocumentPickerDele
     }
 
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        return items.isEmpty ? nil : "Tap a file to install it. ⓘ shows details and lets you run an app without installing it. Swipe left to delete a file."
+        return items.isEmpty ? nil : "Tap a file to install it. ⓘ shows details and lets you run an app without installing it. Swipe left to delete a file. Game data (OBB files) goes in the Shared Storage folder next to these files."
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -123,7 +138,11 @@ final class DownloadsViewController: UITableViewController, UIDocumentPickerDele
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        let installer = InstallerViewController(apkURL: items[indexPath.row].url, temporary: false)
+        openInstaller(items[indexPath.row].url)
+    }
+
+    private func openInstaller(_ url: URL) {
+        let installer = InstallerViewController(apkURL: url, temporary: false)
         installer.onFinish = { [weak self] pkg, openNow in
             self?.reload()
             guard let self = self, let pkg = pkg, openNow, let nav = self.navigationController,

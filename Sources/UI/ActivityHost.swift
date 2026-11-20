@@ -11,6 +11,12 @@ protocol RunHost: AnyObject {
                     buttons: [(text: String, style: UIAlertAction.Style, action: () -> Void)],
                     itemTapped: ((Int) -> Void)?)
     func finishAll()
+    /// Activity.setRequestedOrientation (Android SCREEN_ORIENTATION_* value).
+    func requestOrientation(_ androidOrientation: Int32)
+}
+
+extension RunHost {
+    func requestOrientation(_ androidOrientation: Int32) {}
 }
 
 /// One running Android Activity: its Java object plus the UIKit view showing it.
@@ -27,6 +33,7 @@ final class ActivityHost {
     var viewObjects: [JObject] = []
     var rootBox: ViewBox?
     var finished = false
+    var requestedOrientation: Int32 = -1
 
     init(className: String, title: String) {
         self.className = className
@@ -51,6 +58,19 @@ final class ActivityHost {
         root = v
         v.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(v)
+        if v is CanvasView {
+            // A drawing view (a game) fills the screen and gets every touch.
+            scrollView.isScrollEnabled = false
+            NSLayoutConstraint.activate([
+                v.topAnchor.constraint(equalTo: content.topAnchor),
+                v.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+                v.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+                v.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+                v.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
+            ])
+            return
+        }
+        scrollView.isScrollEnabled = true
         NSLayoutConstraint.activate([
             v.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
             v.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),

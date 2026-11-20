@@ -7,6 +7,12 @@ final class ApkInfoViewController: UITableViewController {
     private var apk: ApkPackage?
     private var error: String?
     private let spinner = UIActivityIndicatorView(style: .gray)
+    /// The base APK pulled out of a bundle (deleted when this screen goes).
+    private var extracted: URL?
+
+    deinit {
+        if let e = extracted { try? FileManager.default.removeItem(at: e) }
+    }
 
     private enum Row { case info(String, String), action(String), list(String) }
     private var sections: [(title: String, rows: [Row])] = []
@@ -28,7 +34,12 @@ final class ApkInfoViewController: UITableViewController {
             guard let self = self else { return }
             var pkg: ApkPackage? = nil
             var err: String? = nil
-            do { pkg = try ApkPackage(url: self.url, scanCode: true) } catch { err = error.localizedDescription }
+            do {
+                // App bundles (.apks / .xapk / .apkm): look at their main APK.
+                let r = try ApkBundle.resolve(self.url)
+                if r.temporary { self.extracted = r.apk }
+                pkg = try ApkPackage(url: r.apk, scanCode: true)
+            } catch { err = error.localizedDescription }
             DispatchQueue.main.async {
                 self.apk = pkg
                 self.error = err

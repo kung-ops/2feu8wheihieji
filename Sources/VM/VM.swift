@@ -91,6 +91,10 @@ final class VM {
     var runnableGeneration: [ObjectIdentifier: Int] = [:]
     /// ListViews with an adapter (see FrameworkLists).
     var listViews: [ViewBox] = []
+    /// Drawing views waiting for the next frame (see Graphics).
+    var dirtyCanvases: [ViewBox] = []
+    var frameScheduled = false
+    var framesDrawn = 0
 
     /// The one main Looper and main Thread. Must be singletons, because apps
     /// check `Looper.getMainLooper().getThread() == Thread.currentThread()`.
