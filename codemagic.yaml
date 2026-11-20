@@ -8,8 +8,8 @@ workflows:
     max_build_duration: 45
     environment:
       xcode: 16.4
-    # Build automatically whenever main changes on GitHub, and for every pull
-    # request into main (so a PR shows whether the iOS app still builds).
+    # Build automatically whenever main or a feature/* branch changes on
+    # GitHub (so a pull request shows whether the iOS app still builds).
     triggering:
       events:
         - push
@@ -17,7 +17,8 @@ workflows:
       branch_patterns:
         - pattern: main
           include: true
-          source: false
+        - pattern: 'feature/*'
+          include: true
       cancel_previous_builds: true
     scripts:
       - name: Show Xcode version
