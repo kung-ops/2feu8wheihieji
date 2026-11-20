@@ -87,8 +87,8 @@ The build is an unsigned `ApkSandbox.ipa` (and the same file as
 
 ## Build the IPA (GitHub + Codemagic)
 1. On https://codemagic.io, connect this repo. The **apk-sandbox-ios**
-   workflow builds automatically for every push to `main` and every pull
-   request into `main` (the result shows as a check on GitHub).
+   workflow builds automatically for every push to `main` (the result shows
+   as a check on the commit in GitHub).
 2. Codemagic runs `xcodegen` to create `ApkSandbox.xcodeproj`, builds with
    Xcode 16.4 for iOS 12.0+ on arm64, and publishes `ApkSandbox.ipa` and
    `ApkSandbox.tipa`.
